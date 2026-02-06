@@ -1,0 +1,3349 @@
+
+local plr = game.Players.LocalPlayer
+local char = plr.Character or plr.CharacterAdded:Wait()
+local cam = workspace.CurrentCamera
+local mouse = plr:GetMouse()
+local User = game:GetService("UserInputService")
+local CAS = game:GetService("ContextActionService")
+local Run = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Engine = ReplicatedStorage.Engine
+local Game_Workspace = workspace:WaitForChild("Game_WorkSpace")
+local Evt 			= Engine:WaitForChild("Events")
+
+local Debris = game:GetService("Debris")
+
+local JetRemotes = ReplicatedStorage:WaitForChild("JetRemotes")
+local SpawnJet = JetRemotes:WaitForChild("SpawnJet")
+local UpdateJetMovement = JetRemotes:WaitForChild("UpdateJetMovement")
+local DestroyJet = JetRemotes:WaitForChild("DestroyJet")
+local UpdateJetSound = JetRemotes:WaitForChild("UpdateJetSound")
+local UpdateJetEffects = JetRemotes:WaitForChild("UpdateJetEffects")
+local GetJetSettings = JetRemotes:WaitForChild("GetJetSettings")
+local DamageJet = JetRemotes:WaitForChild("DamageJet")
+local gameRules		= require(Engine:WaitForChild("GameRules"):WaitForChild("Config"))
+
+local Mods 			= Engine:WaitForChild("Modules")
+local HitMod 		= require(Mods:WaitForChild("Hitmarker"))
+
+local UIS = game:GetService("UserInputService")
+local HapticService = game:GetService("HapticService")
+
+local Humanoid = char:WaitForChild('Humanoid')
+local HumanoidRootPart = char:WaitForChild('HumanoidRootPart')
+local TS = game:GetService("TweenService")
+
+local LastSpreadUpdate = time()
+local generateBullet = 1
+
+local jet = nil
+local jetCam = nil
+local jetCam2 = nil
+local Noise = nil
+local Handle = nil
+local jetExists = false
+local renderSteppedConnection = nil
+
+local MGMuzzle = nil
+local MissileMuzzle = nil
+local gunGimbalBase = nil
+
+local IdleSound = nil
+local EngineSound = nil
+local AfterburnerSound = nil
+local StartupSound = nil
+
+local originalFieldOfView = cam.FieldOfView
+
+local jetSettings = nil
+local baseSpeed = 200
+local minSpeed = 100
+local maxSpeed = 500
+local currentSpeed = baseSpeed
+local previousSpeed = baseSpeed
+local speedChangeRate = 40
+local decelerationRate = 40
+
+local jetRotation = CFrame.new()
+local yawTilt = 0
+local previousRotation = CFrame.new()
+
+local rollSpeed = 2
+local pitchSpeed = 1.5
+local yawTiltAmount = math.rad(30)
+local yawTiltSpeed = 3
+local turnRate = 1.0
+local driftFactor = 0.95
+
+local sensitivity = 0.003
+
+local isInCockpit = false
+
+local trailCamDistance = 50
+local trailCamHeight = 15
+
+local lastGrain = 0
+local Grains = {
+	460199742,
+	460199916,
+	460200108,
+	460200265,
+	460200379,
+	460200555,
+	460107714,
+	460107818,
+	460107958,
+	460108053,
+	460108179,
+	460108373,
+	122228596629378,
+	100401300120751,
+	90339166711344,
+	6136312015
+}
+
+local keysPressed = {
+	Forward = false,
+	Backward = false,
+	Left = false,
+	Right = false,
+	Shoot = false
+}
+
+local updateInterval = 0.05
+local timeSinceLastUpdate = 0
+
+local mouseDeltaX = 0
+local mouseDeltaY = 0
+
+local lastAngularVelocity = 0
+local angularVelocitySmoothed = 0
+local accelerationSmoothed = 0
+local effectsUpdateInterval = 0.033
+local timeSinceLastEffectsUpdate = 0
+
+local mouseAimRadius = 80
+local mouseAimPosition = Vector2.new(0, 0)
+local centerScreenPosition = nil
+
+local maxGunGimbalAngle = math.rad(5)
+local gunGimbalSpeed = 10
+local currentGunPitch = 0
+local currentGunYaw = 0
+
+local aimGui = nil
+local aimRing = nil
+local aimCrosshair = nil
+local missileCrosshair = nil
+local centerDot = nil
+
+local gunHud = nil
+local TiltHud = nil
+
+local GunData = require(Engine.JetWeapons.MachineGun)
+local MissileData = require(Engine.JetWeapons.Missile)
+local FlareData = require(Engine.JetWeapons.Flares)
+
+local CurrentFireMode = "MachineGun"
+
+local MGAmmo = 0 
+local MissileAmmo = 0
+local FlareAmmo = 0
+local StoredMG = 0
+local StoredMissile = 0
+
+local shooting = false
+local mouse1down = false
+local reloading = false
+
+local reloadingMG = false
+local reloadingMissile = false
+local reloadingFlare = false
+
+local reloadMGProgress = 0
+local reloadMissileProgress = 0
+local reloadFlareProgress = 0
+
+local canShoot = true
+
+local BSpread = 0
+
+local SKP_01 = Evt.AcessId:InvokeServer(plr.UserId)
+
+local Ignore_Model = {cam,char,Game_Workspace.Client,Game_Workspace.Server}
+
+local LockingTarget = nil
+local LockProgress = 0
+local LOCK_REQUIRED_TIME = 1
+local LockTarget = nil
+local lockIndicator = nil
+local lastBeepTime = 0
+local hasPlayedLockSound = false
+
+local Pitch = 0
+local Tilt = 0
+
+local BombData = require(Engine.JetWeapons.Bombs)
+local BombAmmo = 0
+local StoredBombs = 0
+local droppingBombs = false
+local bombCooldown = false
+local lastBombDropTime = 0
+local BOMB_COOLDOWN = 5
+local BombGUI
+
+local CameraMode = "Normal"
+local FrozenJetRotation = nil
+local FrozenJetVelocity = nil
+
+local isUsingController = false
+local controllerDeadzone = 0.15
+
+local leftThumbstick = Vector2.new(0, 0)
+local rightThumbstick = Vector2.new(0, 0)
+
+local controllerButtons = {
+	Shoot = false,           
+	ToggleCockpit = false,  
+	FireMode = false,        
+	Reload = false,         
+	DropBombs = false,      
+	BombCam = false,        
+	RearCam = false,         
+	DestroyJet = false,    
+}
+
+local controllerAimSensitivity = 1.2
+local controllerSpeedSensitivity = 1.0
+local controllerTurnSensitivity = 1.0
+
+local isBeingLockedOn = false
+local incomingMissiles = {}
+local lockWarningGui = nil
+local lockText = nil
+local lockingSound = nil
+local lockedSound = nil
+local lastLockingSoundTime = 0
+local LOCKING_SOUND_INTERVAL = 0.5
+local previousLockingTarget = nil
+
+local FlareData = require(Engine.JetWeapons.Flares)
+local FlareAmmo = 0
+local flareCooldown = false
+local lastFlareTime = 0
+local FLARE_COOLDOWN = 3.5
+local FlaresMuzzle = nil
+
+local MissileLocking = JetRemotes:WaitForChild("MissileLocking")
+local MissileFiredRemote = JetRemotes:WaitForChild("MissileFired")
+local DeployFlaresRemote = JetRemotes:WaitForChild("DeployFlares")
+local FlareDeployedRemote = JetRemotes:WaitForChild("FlareDeployed")
+
+local function applyDeadzone(value, deadzone)
+	if math.abs(value) < deadzone then
+		return 0
+	end
+	local sign = value > 0 and 1 or -1
+	return sign * ((math.abs(value) - deadzone) / (1 - deadzone))
+end
+
+local function isGamepadConnected()
+	return UIS:GetGamepadConnected(Enum.UserInputType.Gamepad1)
+end
+
+local function updateThumbsticks()
+	if not isGamepadConnected() then
+		leftThumbstick = Vector2.new(0, 0)
+		rightThumbstick = Vector2.new(0, 0)
+		return
+	end
+
+	local gamepadState = UIS:GetGamepadState(Enum.UserInputType.Gamepad1)
+
+	for _, input in ipairs(gamepadState) do
+		if input.KeyCode == Enum.KeyCode.Thumbstick1 then
+			leftThumbstick = Vector2.new(
+				applyDeadzone(input.Position.X, controllerDeadzone),
+				applyDeadzone(input.Position.Y, controllerDeadzone)
+			)
+		elseif input.KeyCode == Enum.KeyCode.Thumbstick2 then
+			rightThumbstick = Vector2.new(
+				applyDeadzone(input.Position.X, controllerDeadzone),
+				applyDeadzone(input.Position.Y, controllerDeadzone)
+			)
+		end
+	end
+end
+
+local function updateControllerAim()
+	if not jetExists then return end
+	if rightThumbstick.Magnitude > 0 then
+		isUsingController = true
+
+		local aimX = rightThumbstick.X * mouseAimRadius * controllerAimSensitivity
+		local aimY = -rightThumbstick.Y * mouseAimRadius * controllerAimSensitivity
+
+		local aimVector = Vector2.new(aimX, aimY)
+		if aimVector.Magnitude > mouseAimRadius then
+			aimVector = aimVector.Unit * mouseAimRadius
+		end
+
+		mouseAimPosition = aimVector
+	elseif isUsingController then
+		mouseAimPosition = mouseAimPosition:Lerp(Vector2.new(0, 0), 0.1)
+	end
+end
+
+local function updateControllerMovement()
+	if not jetExists then return end
+
+	if leftThumbstick.Y > 0 then
+		keysPressed.Forward = true
+		keysPressed.Backward = false
+	elseif leftThumbstick.Y < 0 then
+		keysPressed.Forward = false
+		keysPressed.Backward = true
+	else
+		if isUsingController and not UIS:IsKeyDown(Enum.KeyCode.W) then
+			keysPressed.Forward = false
+		end
+		if isUsingController and not UIS:IsKeyDown(Enum.KeyCode.S) then
+			keysPressed.Backward = false
+		end
+	end
+
+	if leftThumbstick.X < -0.1 then
+		keysPressed.Left = true
+		keysPressed.Right = false
+	elseif leftThumbstick.X > 0.1 then
+		keysPressed.Left = false
+		keysPressed.Right = true
+	else
+		if isUsingController and not UIS:IsKeyDown(Enum.KeyCode.A) then
+			keysPressed.Left = false
+		end
+		if isUsingController and not UIS:IsKeyDown(Enum.KeyCode.D) then
+			keysPressed.Right = false
+		end
+	end
+end
+
+local function setupMissileWarningUI()
+	if not aimGui then return end
+
+	lockText = aimGui:FindFirstChild("LockText")
+	if lockText then
+		lockText.Visible = false
+		lockText.Text = ""
+	end
+end
+
+local function updateMissileWarning()
+	if not lockText or not Handle then return end
+
+	local hasIncomingMissile = false
+	for missileId, _ in pairs(incomingMissiles) do
+		hasIncomingMissile = true
+		break
+	end
+
+	if hasIncomingMissile then
+		lockText.Visible = true
+		lockText.Text = "MISSILE LOCKED, EVADE"
+		lockText.TextColor3 = Color3.fromRGB(255, 0, 0)
+
+		if lockedSound and not lockedSound.IsPlaying then
+			lockedSound:Play()
+		end
+
+		local flashAlpha = math.abs(math.sin(tick() * 5))
+		lockText.TextTransparency = flashAlpha * 0.3
+		
+		print("Missile Locked!")
+	elseif isBeingLockedOn then
+		lockText.Visible = true
+		lockText.Text = "MISSILE IS LOCKING ON"
+		lockText.TextColor3 = Color3.fromRGB(255, 165, 0)
+		lockText.TextTransparency = 0
+
+		local currentTime = tick()
+		if currentTime - lastLockingSoundTime >= LOCKING_SOUND_INTERVAL then
+			if lockingSound then
+				lockingSound:Play()
+			end
+			lastLockingSoundTime = currentTime
+		end
+		
+		print("Missile Locking!")
+	else
+		lockText.Visible = false
+		lockText.Text = ""
+	end
+end
+
+local function fireFlares()
+	if not jetExists or not jet or not Handle then return end
+	if not FlaresMuzzle then return end
+	if FlareAmmo <= 0 then
+		if Handle:FindFirstChild("Click") then
+			Handle.Click:Play()
+		end
+		return
+	end
+
+	local currentTime = tick()
+	if currentTime - lastFlareTime < FLARE_COOLDOWN then
+		return
+	end
+
+	flareCooldown = true
+	lastFlareTime = currentTime
+
+	local flareCount = FlareData.FlaresPerBurst or 6
+	local flareMuzzlePosition = FlaresMuzzle.WorldPosition
+	local flareDirection = Handle.CFrame.LookVector
+
+	for i = 1, flareCount do
+		task.spawn(function()
+			createFlare(FlaresMuzzle.WorldPosition, Handle.CFrame.LookVector, i)
+			
+		end)
+		if FlaresMuzzle:FindFirstChild("Fire") then
+			FlaresMuzzle.Fire:Play()
+		end
+		task.wait(0.06)
+	end
+
+	FlareAmmo = FlareAmmo - 1
+
+	DeployFlaresRemote:FireServer(FlaresMuzzle, Handle.CFrame.LookVector, flareCount)
+
+	task.delay(FLARE_COOLDOWN, function()
+		flareCooldown = false
+	end)
+end
+
+function createFlare(origin, baseDirection, index)
+	local Flare = Instance.new("Part", Game_Workspace.Client)
+	Flare.Name = plr.Name .. "_Flare"
+	Flare.CanCollide = false
+	Flare.Color = FlareData.TracerColor or Color3.fromRGB(255, 200, 100)
+	Flare.Shape = Enum.PartType.Ball
+	Flare.Transparency = 0.5
+	Flare.Size = Vector3.new(0.5, 0.5, 0.5)
+	Flare.Material = Enum.Material.Neon
+
+	local randomAngleX = math.rad(math.random(-60, 60))
+	local randomAngleY = math.rad(math.random(-60, 60))
+	local randomAngleZ = math.rad(math.random(-30, 30))
+
+	local spreadCFrame = CFrame.Angles(randomAngleX, randomAngleY, randomAngleZ)
+	local flareDirection = (CFrame.new(Vector3.new(), baseDirection) * spreadCFrame).LookVector
+
+
+	local backwardDirection = -Handle.CFrame.LookVector
+	local downDirection = -Handle.CFrame.UpVector
+	local combinedDirection = (backwardDirection + downDirection * 0.5 + flareDirection * 0.3).Unit
+
+	Flare.CFrame = CFrame.new(origin, origin + combinedDirection)
+
+
+	local At1 = Instance.new("Attachment")
+	At1.Name = "At1"
+	At1.Position = Vector3.new(0, 0, 0)
+	At1.Parent = Flare
+
+	local At2 = Instance.new("Attachment")
+	At2.Name = "At2"
+	At2.Position = Vector3.new(0, 0, 0.3)
+	At2.Parent = Flare
+
+	local Trail = Instance.new("Trail")
+	Trail.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.2),
+		NumberSequenceKeypoint.new(0.5, 0.5),
+		NumberSequenceKeypoint.new(1, 1)
+	})
+	Trail.Color = ColorSequence.new(Color3.fromRGB(255, 200, 100), Color3.fromRGB(255, 100, 50))
+	Trail.WidthScale = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(1, 0.2)
+	})
+	Trail.Lifetime = 2
+	Trail.LightEmission = 1
+	Trail.LightInfluence = 0
+	Trail.FaceCamera = true
+	Trail.Attachment0 = At1
+	Trail.Attachment1 = At2
+	Trail.Parent = Flare
+
+
+	local PointLight = Instance.new("PointLight")
+	PointLight.Color = Color3.fromRGB(255, 200, 100)
+	PointLight.Brightness = 2
+	PointLight.Range = 10
+	PointLight.Parent = Flare
+
+	local Smoke = Instance.new("ParticleEmitter")
+	Smoke.Color = ColorSequence.new(Color3.fromRGB(200, 200, 200))
+	Smoke.Size = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.5),
+		NumberSequenceKeypoint.new(1, 2)
+	})
+	Smoke.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.3),
+		NumberSequenceKeypoint.new(1, 1)
+	})
+	Smoke.Lifetime = NumberRange.new(1, 2)
+	Smoke.Rate = 50
+	Smoke.Speed = NumberRange.new(2, 5)
+	Smoke.SpreadAngle = Vector2.new(30, 30)
+	Smoke.Parent = Flare
+
+
+	local BF = Instance.new("BodyForce", Flare)
+	BF.Force = Vector3.new(0, Flare:GetMass() * workspace.Gravity * 0.3, 0)
+
+	local flareSpeed = FlareData.MuzzleVelocity or 100
+	Flare:ApplyImpulse(combinedDirection * flareSpeed * Flare:GetMass())
+
+	Flare.CollisionGroup = "Bullet"
+
+
+	task.delay(3, function()
+		if Flare and Flare.Parent then
+			TS:Create(Flare, TweenInfo.new(1), {Transparency = 1}):Play()
+			if PointLight then
+				TS:Create(PointLight, TweenInfo.new(1), {Brightness = 0}):Play()
+			end
+			task.wait(1)
+			if Flare and Flare.Parent then
+				Flare:Destroy()
+			end
+		end
+	end)
+
+	Debris:AddItem(Flare, 5)
+end
+
+function UpdatePlayerHeat(on)
+
+	for _, player in pairs(game.Players:GetPlayers()) do
+		if player.Character then
+			local existingHighlight = player.Character:FindFirstChild("ThermalHighlight")
+
+			if on then
+				if not existingHighlight then
+					local highlight = Instance.new("Highlight")
+					highlight.Name = "ThermalHighlight"
+					highlight.FillColor = Color3.fromRGB(230, 230, 230)
+					highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+					highlight.FillTransparency = 0.1
+					highlight.OutlineTransparency = 0
+					highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+					highlight.Parent = player.Character
+				end
+			else
+				if existingHighlight then
+					existingHighlight:Destroy()
+				end
+			end
+		end
+	end
+	for _, vehicle in pairs(workspace.Team1:GetChildren()) do
+		local existingHighlight = vehicle:FindFirstChild("ThermalHighlight")
+		if on then
+			if not existingHighlight then
+				local highlight = Instance.new("Highlight")
+				highlight.Name = "ThermalHighlight"
+				highlight.FillColor = Color3.fromRGB(230, 230, 230)
+				highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+				highlight.FillTransparency = 0.1
+				highlight.OutlineTransparency = 0
+				highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+				highlight.Parent = vehicle
+			end
+		else
+			if existingHighlight then
+				existingHighlight:Destroy()
+			end
+		end
+	end
+	for _, vehicle in pairs(workspace.Team2:GetChildren()) do
+		local existingHighlight = vehicle:FindFirstChild("ThermalHighlight")
+		if on then
+			if not existingHighlight then
+				local highlight = Instance.new("Highlight")
+				highlight.Name = "ThermalHighlight"
+				highlight.FillColor = Color3.fromRGB(230, 230, 230)
+				highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+				highlight.FillTransparency = 0.1
+				highlight.OutlineTransparency = 0
+				highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+				highlight.Parent = vehicle
+			end
+		else
+			if existingHighlight then
+				existingHighlight:Destroy()
+			end
+		end
+	end
+end
+
+function EnterBombCam()
+	print("BombCamStart")
+	if CameraMode == "BombCam" then return end
+
+	local cam3 = Handle:FindFirstChild("Cam3", true)
+	if not cam3 then 
+		warn("cam3 attachment not found")
+		return 
+	end
+	print("BombCam Found")
+	
+	FrozenJetRotation = jetRotation
+	FrozenJetVelocity = Handle.AssemblyLinearVelocity
+
+	CameraMode = "BombCam"
+
+	
+	cam.CameraType = Enum.CameraType.Scriptable
+	print("BombCam Set")
+	
+	if aimGui then
+		aimGui.Visible = false
+	end
+
+	if BombGUI then
+		BombGUI.Visible = true
+	end
+	game.SoundService.GunFire.EqualizerSoundEffect.LowGain = 10
+	game.SoundService.GunFire.EqualizerSoundEffect.MidGain = 5
+	game.SoundService.GunFire.EqualizerSoundEffect.MidGain = -15
+	UpdateLighting()
+	UpdatePlayerHeat(true)
+end
+
+function EnterRearCam()
+	if CameraMode == "RearCam" then return end
+
+	local cam4 = Handle:FindFirstChild("Cam4", true)
+	if not cam4 then 
+		warn("cam4 attachment not found")
+		return 
+	end
+
+	
+	FrozenJetRotation = jetRotation
+	FrozenJetVelocity = Handle.AssemblyLinearVelocity
+
+	CameraMode = "RearCam"
+
+	
+	cam.CameraType = Enum.CameraType.Scriptable
+
+	
+	if aimGui then
+		aimGui.Visible = false
+	end
+	if BombGUI then
+		BombGUI.Visible = false
+	end
+	game.SoundService.GunFire.EqualizerSoundEffect.LowGain = 0
+	game.SoundService.GunFire.EqualizerSoundEffect.MidGain = 0
+	game.SoundService.GunFire.EqualizerSoundEffect.MidGain = 0
+	UpdateLighting()
+	UpdatePlayerHeat(false)
+end
+
+function ExitSpecialCam()
+	if CameraMode == "Normal" then return end
+
+	CameraMode = "Normal"
+
+	
+	cam.CameraType = Enum.CameraType.Custom
+
+	
+	FrozenJetRotation = nil
+	FrozenJetVelocity = nil
+
+	
+	if aimGui then
+		aimGui.Visible = true
+	end
+	if BombGUI then
+		BombGUI.Visible = false
+	end
+	game.SoundService.GunFire.EqualizerSoundEffect.LowGain = 0
+	game.SoundService.GunFire.EqualizerSoundEffect.MidGain = 0
+	game.SoundService.GunFire.EqualizerSoundEffect.MidGain = 0
+	UpdateLighting()
+	UpdatePlayerHeat(false)
+end
+
+local function applyJetSettings(settings)
+	if not settings then return end
+
+	jetSettings = settings
+
+	
+	maxSpeed = settings.MaxSpeed or 500
+	minSpeed = settings.MinSpeed or 100
+	baseSpeed = settings.BaseSpeed or 200
+	currentSpeed = baseSpeed
+	previousSpeed = baseSpeed
+
+	
+	speedChangeRate = settings.Acceleration or 40
+	decelerationRate = settings.Deceleration or settings.Acceleration or 40
+
+	
+	rollSpeed = settings.RollSensitivity or 2.0
+	pitchSpeed = settings.PitchSensitivity or 1.5
+	yawTiltAmount = math.rad(settings.YawTiltAmount or 30)
+	yawTiltSpeed = settings.YawTiltSpeed or 3.0
+	turnRate = settings.TurnRate or 1.0
+	driftFactor = settings.DriftFactor or 0.95
+
+end
+
+
+local function updateGunGimbal(deltaTime)
+	if not MGMuzzle or not Handle then return end
+
+	
+	local aimOffset = getMouseAimOffset()
+
+	local targetYaw = aimOffset.X * maxGunGimbalAngle
+	local targetPitch = -aimOffset.Y * maxGunGimbalAngle
+
+	local lerpFactor = math.min(gunGimbalSpeed * deltaTime, 1)
+	currentGunYaw = currentGunYaw + (targetYaw - currentGunYaw) * lerpFactor
+	currentGunPitch = currentGunPitch + (targetPitch - currentGunPitch) * lerpFactor
+
+	local gunRotation = CFrame.Angles(currentGunPitch, currentGunYaw, 0)
+
+	local gunBaseOffset = Vector3.new(0, 0, 0)
+
+
+	if not MGMuzzle:GetAttribute("OriginalOffset") then
+		local relativePos = Handle.CFrame:PointToObjectSpace(MGMuzzle.Position)
+		MGMuzzle:SetAttribute("OriginalOffsetX", relativePos.X)
+		MGMuzzle:SetAttribute("OriginalOffsetY", relativePos.Y)
+		MGMuzzle:SetAttribute("OriginalOffsetZ", relativePos.Z)
+	end
+
+	local originalOffset = Vector3.new(
+		MGMuzzle:GetAttribute("OriginalOffsetX") or 0,
+		MGMuzzle:GetAttribute("OriginalOffsetY") or 0,
+		MGMuzzle:GetAttribute("OriginalOffsetZ") or 0
+	)
+
+	
+	local newGunCFrame = Handle.CFrame * CFrame.new(originalOffset) * gunRotation
+	MGMuzzle.CFrame = newGunCFrame
+end
+
+
+
+function getMouseAimOffset()
+	return Vector2.new(
+		-mouseAimPosition.X / mouseAimRadius,
+		mouseAimPosition.Y / mouseAimRadius
+	)
+end
+
+function RAND(Min, Max, Accuracy)
+	local Inverse = 1 / (Accuracy or 1)
+	return (math.random(Min * Inverse, Max * Inverse) / Inverse)
+end
+
+
+local function constrainMouseToRing(mousePos)
+	if not centerScreenPosition then return mousePos end
+
+	
+	local offset = mousePos - centerScreenPosition
+
+	
+	local distance = offset.Magnitude
+
+	
+	if distance > mouseAimRadius then
+		offset = offset.Unit * mouseAimRadius
+	end
+
+	return centerScreenPosition + offset
+end
+
+
+local function createAimUI()
+
+
+	
+	aimGui = plr.PlayerGui.PlaneGUI.Main
+	BombGUI = aimGui.Parent.Bomb
+	
+	aimRing = aimGui.AimRing
+
+	
+	centerDot = aimGui.CenterDot
+
+	
+	aimCrosshair = aimGui.Crosshair
+	missileCrosshair = aimGui.Missile
+
+	gunHud = aimGui.GunUI
+	TiltHud = aimGui.TiltUI
+
+	
+	lockIndicator = aimGui.Lockon
+
+
+	local lockBorder = aimGui.Lockon.UIStroke
+
+
+	local lockProgress = aimGui.Lockon.Bar.Fill
+
+	aimGui.Visible = true
+end
+
+function ZeroString(num,digits)
+	local StringRN = ""
+	if num < 10 then
+		for i=1,digits-2,1 do
+			StringRN = StringRN.."0"
+		end
+		StringRN = StringRN..tostring(num)
+	elseif num < 100 then
+		for i=1,digits-3,1 do
+			StringRN = StringRN.."0"
+		end
+		StringRN = StringRN..tostring(num)
+	elseif num < 1000 then
+		for i=1,digits-4,1 do
+			StringRN = StringRN.."0"
+		end
+		StringRN = StringRN..tostring(num)
+	end
+	return StringRN
+end
+
+
+local function isTargetInAimRing(targetPosition)
+	if not Handle or not centerScreenPosition then return false end
+
+	
+	local screenPos, onScreen = cam:WorldToScreenPoint(targetPosition)
+
+	if not onScreen then return false end
+
+	
+	local screenPoint = Vector2.new(screenPos.X, screenPos.Y)
+	local distanceFromCenter = (screenPoint - centerScreenPosition).Magnitude
+
+	
+	return distanceFromCenter <= mouseAimRadius*1.6
+end
+
+local function findPotentialLockTargets()
+	if not Game_Workspace:FindFirstChild("Vehicles") then return {} end
+
+	local targets = {}
+
+	for _, vehicle in pairs(Game_Workspace.Vehicles:GetChildren()) do
+		
+		local vehicleHandle = vehicle:FindFirstChild("Handle")
+		if vehicleHandle and vehicleHandle ~= Handle then 
+			
+			local jetName = vehicle.Name
+			local ownerName = jetName:match("(.+)'s Jet$")
+
+			if ownerName then
+				local ownerPlayer = game.Players:FindFirstChild(ownerName)
+				
+				if ownerPlayer and ownerPlayer.Team == plr.Team then
+					continue
+				end
+			end
+
+			
+			if isTargetInAimRing(vehicleHandle.Position) then
+				if (vehicleHandle.Position - Handle.Position).Magnitude < 2000 then
+					table.insert(targets, vehicle)
+				end
+			end
+		end
+	end
+
+	return targets
+end
+
+local function updateMissileLock(deltaTime)
+	if CurrentFireMode ~= "Missile" then
+		LockingTarget = nil
+		LockProgress = 0
+		LockTarget = nil
+		lastBeepTime = 0
+		hasPlayedLockSound = false
+		if lockIndicator then
+			lockIndicator.Visible = false
+		end
+		return
+	end
+
+	local potentialTargets = findPotentialLockTargets()
+
+	if #potentialTargets > 0 then
+		local closestTarget = nil
+		local closestDistance = math.huge
+		for _, target in pairs(potentialTargets) do
+			local targetHandle = target:FindFirstChild("Handle")
+			if targetHandle then
+				local screenPos = cam:WorldToScreenPoint(targetHandle.Position)
+				local screenPoint = Vector2.new(screenPos.X, screenPos.Y)
+				local distanceFromCenter = (screenPoint - centerScreenPosition).Magnitude
+
+				if distanceFromCenter < closestDistance then
+					closestDistance = distanceFromCenter
+					closestTarget = target
+				end
+			end
+		end
+
+		
+		if closestTarget then
+			
+			if LockingTarget == closestTarget then
+				
+				LockProgress = LockProgress + deltaTime
+
+				
+				local lockRatio = math.min(LockProgress / LOCK_REQUIRED_TIME, 1)
+				local beepInterval = 0.5 - (lockRatio * 0.4)
+
+				
+				local currentTime = tick()
+				if currentTime - lastBeepTime >= beepInterval and Handle and Handle:FindFirstChild("Beep") then
+					Handle.Beep:Play()
+					lastBeepTime = currentTime
+				end
+
+				
+				if lockIndicator then
+					local targetHandle = closestTarget:FindFirstChild("Handle")
+					if targetHandle then
+						local screenPos, onScreen = cam:WorldToViewportPoint(targetHandle.Position)
+						if onScreen then
+							lockIndicator.Position = UDim2.new(0, screenPos.X, 0, screenPos.Y)
+							lockIndicator.Visible = true
+
+							local lockFill = lockIndicator.Bar:FindFirstChild("Fill")
+							if lockFill then
+								lockFill.Size = UDim2.new(math.min(LockProgress / LOCK_REQUIRED_TIME, 1), 0, 0.9, 0)
+							end
+
+							
+							if LockProgress >= LOCK_REQUIRED_TIME then
+								LockTarget = closestTarget
+
+								
+								if not hasPlayedLockSound and Handle and Handle:FindFirstChild("LockOnSound") then
+									Handle.LockOnSound:Play()
+									hasPlayedLockSound = true
+								end
+
+								local lockBorder = lockIndicator:FindFirstChildOfClass("UIStroke")
+								if lockBorder then
+									lockBorder.Color = Color3.fromRGB(255, 0, 0)
+								end
+								lockFill.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+							else
+								local lockBorder = lockIndicator:FindFirstChildOfClass("UIStroke")
+								if lockBorder then
+									lockBorder.Color = Color3.fromRGB(250, 160, 0)
+
+								end
+								lockFill.BackgroundColor3 = Color3.fromRGB(250, 160, 0)
+							end
+						end
+					end
+				end
+			else
+				
+				LockingTarget = closestTarget
+				LockProgress = 0
+				LockTarget = nil
+				lastBeepTime = 0
+				hasPlayedLockSound = false
+			end
+		end
+	else
+		
+		LockingTarget = nil
+		LockProgress = 0
+		LockTarget = nil
+		lastBeepTime = 0
+		hasPlayedLockSound = false
+		if lockIndicator then
+			lockIndicator.Visible = false
+		end
+	end
+	
+	if LockingTarget ~= previousLockingTarget then
+		
+		if previousLockingTarget and previousLockingTarget:FindFirstChild("Handle") then
+			
+			Evt.MissileLockingNotify:FireServer(previousLockingTarget, false)
+		end
+		if LockingTarget and LockingTarget:FindFirstChild("Handle") then
+			
+			Evt.MissileLockingNotify:FireServer(LockingTarget, true)
+		end
+		previousLockingTarget = LockingTarget
+	end
+	
+	
+end
+
+
+local function updateCrosshairPosition()
+	if not aimCrosshair or not centerScreenPosition then return end
+
+	
+	local screenPos = centerScreenPosition + mouseAimPosition
+
+	TiltHud.CanvasGroup.Rotation = Handle.Orientation.Z
+	TiltHud.Lines.Rotation = Handle.Orientation.Y
+	TiltHud.CanvasGroup.Top.Position = UDim2.new(0.5,0,0.5+Pitch/3,0)
+
+	aimGui.Speed.Speed.Fill.Size = UDim2.new(0.95,0,(currentSpeed-minSpeed)/(maxSpeed-minSpeed),0)
+	aimGui.Speed.Acceleration.Fill.Size = UDim2.new(0.95,0,0.5 + accelerationSmoothed/200,0)
+
+	aimGui.Hull.Fill.Size = UDim2.new((jet.Info.Health.Value/jet.Info.MaxHealth.Value)/(1/0.98),0,0.9,0)
+
+	if gunHud:FindFirstChild("Bombs") then
+		gunHud.Bombs.Text = "BOMBS: " .. BombAmmo
+	end
+	if gunHud:FindFirstChild("Flares") then
+		gunHud.Flares.Text = "FLARES: " .. FlareAmmo
+	end
+	if CameraMode == "BombCam" then
+		local muzzleDirection = Handle.BombMuzzle.LookVector
+		local cameraDirection = cam.CFrame.LookVector
+		local cameraRight = cam.CFrame.RightVector
+		local cameraUp = cam.CFrame.UpVector
+
+		local horizontalOffset
+		local verticalOffset
+
+		horizontalOffset = muzzleDirection:Dot(cameraRight) * 0.4
+		verticalOffset = muzzleDirection:Dot(cameraUp) * 0.4
+		
+
+		TS:Create(BombGUI.Crosshair,TweenInfo.new(0.04,Enum.EasingStyle.Sine),{Position = UDim2.new(0.5 + horizontalOffset, 0, 0.5 - verticalOffset, 0)}):Play()
+	end
+	if CurrentFireMode == "MachineGun" then
+		aimCrosshair.Position = UDim2.new(0, screenPos.X, 0, screenPos.Y)
+
+		local Size = BSpread / 60
+		aimCrosshair.Size = UDim2.new(Size,0,Size,0)
+
+		aimCrosshair.Visible = true
+		missileCrosshair.Visible = false
+
+		aimRing.UIStroke.Color = Color3.fromRGB(34, 255, 0)
+		centerDot.BackgroundColor3 = Color3.fromRGB(34, 255, 0)
+
+		gunHud.Ammo.Text = "AMMO: "..ZeroString(MGAmmo,5)
+		gunHud.StoredAmmo.Text = "RESERVE: "..ZeroString(StoredMG,5)
+
+		if reloading then
+			gunHud.Reload.Fill.Visible = true
+			gunHud.Reload.Fill.Size = UDim2.new(0.95,0,reloadMGProgress/2,0)
+		else
+			gunHud.Reload.Fill.Visible = false
+		end
+	elseif CurrentFireMode == "Missile" then
+		missileCrosshair.Position = UDim2.new(0, screenPos.X, 0, screenPos.Y)
+
+		aimCrosshair.Visible = false
+		missileCrosshair.Visible = true
+
+		aimRing.UIStroke.Color = Color3.fromRGB(255, 0, 0)
+		centerDot.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+
+		gunHud.Ammo.Text = "AMMO: "..ZeroString(MissileAmmo,3)
+		gunHud.StoredAmmo.Text = "RESERVE: "..ZeroString(StoredMissile,3)
+
+		if reloading then
+			gunHud.Reload.Fill.Visible = true
+			gunHud.Reload.Fill.Size = UDim2.new(0.95,0,reloadMissileProgress/2,0)
+		else
+			gunHud.Reload.Fill.Visible = false
+		end
+	end
+end
+
+
+local function destroyAimUI()
+	if aimGui then
+		aimGui:Destroy()
+		aimGui = nil
+		aimRing = nil
+		aimCrosshair = nil
+		centerDot = nil
+		lockIndicator = nil
+	end
+end
+
+
+local function spawnJet()
+	if jetExists then
+		print("Jet already exists")
+		return
+	end
+
+	
+	if plr.Team.Name == "NATO" then
+		SpawnJet:FireServer("F-35")
+	else
+		SpawnJet:FireServer("SU-57")
+	end
+
+
+	
+	local maxWaitTime = 5
+	local startTime = tick()
+	repeat
+		wait(0.1)
+		jet = workspace:FindFirstChild(plr.Name .. "'s Jet", true)
+	until jet or (tick() - startTime) > maxWaitTime
+
+	if not jet then
+		warn("Jet failed to spawn")
+		return
+	end
+
+	Handle = jet:WaitForChild("Handle")
+	jetCam = Handle:WaitForChild("Cam")
+	jetCam2 = Handle:WaitForChild("Cam2")
+	MGMuzzle = Handle:WaitForChild("MGMuzzle")
+	MissileMuzzle = Handle:WaitForChild("MissileMuzzle1")
+
+	
+	FlaresMuzzle = Handle:FindFirstChild("FlaresMuzzle")
+	lockingSound = Handle:FindFirstChild("LockingSound")
+	lockedSound = Handle:FindFirstChild("LockedSound")
+
+	
+	setupMissileWarningUI()
+
+	
+	FlareAmmo = FlareData.AmmoInGun or 4
+	
+	
+	
+	IdleSound = Handle:FindFirstChild("Idle")
+	EngineSound = Handle:FindFirstChild("Engine")
+	AfterburnerSound = Handle:FindFirstChild("AfterBurners")
+	StartupSound = Handle:FindFirstChild("Startup")
+	
+	char.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, false)
+
+	
+	local success, settings = pcall(function()
+		return GetJetSettings:InvokeServer()
+	end)
+
+	if success and settings then
+		applyJetSettings(settings)
+	else
+		warn("Failed to get jet settings, using defaults")
+	end
+
+	
+	jetRotation = Handle.CFrame - Handle.CFrame.Position
+	previousRotation = jetRotation
+
+	jetExists = true
+
+	
+	cam.CameraType = Enum.CameraType.Scriptable
+
+	
+	centerScreenPosition = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+	mouseAimPosition = Vector2.new(0, 0)
+
+	
+	currentGunPitch = 0
+	currentGunYaw = 0
+
+	
+	createAimUI()
+
+	
+	User.MouseBehavior = Enum.MouseBehavior.Default
+	User.MouseIconEnabled = false
+
+	CAS:BindAction("Forward", handleAction, false, Enum.KeyCode.W)
+	CAS:BindAction("Backward", handleAction, false, Enum.KeyCode.S)
+	CAS:BindAction("Left", handleAction, false, Enum.KeyCode.A)
+	CAS:BindAction("Right", handleAction, false, Enum.KeyCode.D)
+	CAS:BindAction("Shoot", handleAction, false, Enum.UserInputType.MouseButton1)
+	CAS:BindAction("ToggleCockpit", handleAction, false, Enum.UserInputType.MouseButton2)
+	CAS:BindAction("FireMode", handleAction, false, Enum.KeyCode.E)
+	CAS:BindAction("Reload", handleAction, false, Enum.KeyCode.R)
+	CAS:BindAction("DropBombs", handleAction, false, Enum.KeyCode.B)
+	CAS:BindAction("DeployFlares", handleAction, false, Enum.KeyCode.F)
+
+	
+	startJetLoop()
+
+
+	BSpread = math.min(GunData.MinSpread, GunData.MaxSpread * 1.6)
+end
+
+function handleAction(actionName, inputState, inputObject)
+	if not jetExists then 
+		return 
+	end
+
+	if actionName == "ToggleCockpit" then
+		if inputState == Enum.UserInputState.Begin then
+			isInCockpit = true
+			game.SoundService.GunFire.EqualizerSoundEffect.LowGain = 5
+			game.SoundService.GunFire.EqualizerSoundEffect.MidGain = 1
+			game.SoundService.GunFire.EqualizerSoundEffect.HighGain = -15
+			
+			game.SoundService.JetSounds.EqualizerSoundEffect.LowGain = 5
+			game.SoundService.JetSounds.EqualizerSoundEffect.MidGain = 1
+			game.SoundService.JetSounds.EqualizerSoundEffect.HighGain = -15
+			
+			game.SoundService.GunSounds.EqualizerSoundEffect.LowGain = 5
+			game.SoundService.GunSounds.EqualizerSoundEffect.MidGain = 1
+			game.SoundService.GunSounds.EqualizerSoundEffect.HighGain = -15
+			
+			game.SoundService.Explosions.EqualizerSoundEffect.LowGain = 5
+			game.SoundService.Explosions.EqualizerSoundEffect.MidGain = 1
+			game.SoundService.Explosions.EqualizerSoundEffect.HighGain = -15
+			
+		elseif inputState == Enum.UserInputState.End then
+			isInCockpit = false
+			game.SoundService.GunFire.EqualizerSoundEffect.LowGain = 0
+			game.SoundService.GunFire.EqualizerSoundEffect.MidGain = 0
+			game.SoundService.GunFire.EqualizerSoundEffect.HighGain = 0
+			
+			game.SoundService.JetSounds.EqualizerSoundEffect.LowGain = 0
+			game.SoundService.JetSounds.EqualizerSoundEffect.MidGain = 0
+			game.SoundService.JetSounds.EqualizerSoundEffect.HighGain = 0
+			
+			game.SoundService.GunSounds.EqualizerSoundEffect.LowGain = 0
+			game.SoundService.GunSounds.EqualizerSoundEffect.MidGain = 0
+			game.SoundService.GunSounds.EqualizerSoundEffect.HighGain = 0
+			
+			game.SoundService.Explosions.EqualizerSoundEffect.LowGain = 0
+			game.SoundService.Explosions.EqualizerSoundEffect.MidGain = 0
+			game.SoundService.Explosions.EqualizerSoundEffect.HighGain = 0
+		end
+		return
+	end
+
+	if inputState == Enum.UserInputState.Begin then
+		keysPressed[actionName] = true
+	elseif inputState == Enum.UserInputState.End then
+		keysPressed[actionName] = false
+	end
+	
+	if actionName == "DeployFlares" and inputState == Enum.UserInputState.Begin then
+		if not flareCooldown and FlareAmmo > 0 then
+			fireFlares()
+		end
+		return
+	end
+
+	if actionName == "Shoot" and inputState == Enum.UserInputState.Begin then
+		
+		local aimOffset = getMouseAimOffset()
+
+		if not reloading then
+			if CurrentFireMode == "MachineGun" then
+				Shoot(GunData,aimOffset)
+			elseif CurrentFireMode == "Missile" then
+				Shoot(MissileData,aimOffset)
+			end
+
+		end
+	elseif actionName == "Shoot" and inputState == Enum.UserInputState.End then
+		mouse1down = false
+		canShoot = true
+	end
+
+	if actionName == "FireMode" and inputState == Enum.UserInputState.Begin and CurrentFireMode == "MachineGun" then
+		CurrentFireMode = "Missile" 
+	elseif actionName == "FireMode" and inputState == Enum.UserInputState.Begin and CurrentFireMode == "Missile" then
+		CurrentFireMode = "MachineGun" 
+	end
+
+	if actionName == "Reload" and inputState == Enum.UserInputState.Begin and not shooting and not reloading then
+		Reload()
+	end
+
+	if actionName == "DropBombs" and inputState == Enum.UserInputState.Begin then
+		if not droppingBombs and not bombCooldown and BombAmmo > 0 then
+			DropBombs()
+		end
+		return
+	end
+end
+
+function Reload()
+	if CurrentFireMode == "MachineGun" then
+		if MGAmmo < GunData.Ammo then
+			reloadingMG = true
+			reloading = true
+
+			Handle.Reload:Play()
+			for i = 0,2,0.01 do
+				task.wait(0.01)
+				reloadMGProgress += 0.01
+			end
+			reloadMGProgress = 0
+			reloadingMG = false
+			reloading = false
+
+			if StoredMG > GunData.Ammo then
+				StoredMG-= GunData.Ammo - MGAmmo
+				MGAmmo = GunData.Ammo
+			else
+				MGAmmo += StoredMG
+				StoredMG = 0
+			end
+		end
+	elseif CurrentFireMode == "Missile" then
+		if MissileAmmo < MissileData.Ammo then
+			reloadingMissile = true
+			reloading = true
+
+			Handle.Reload:Play()
+			for i = 0,2,0.01 do
+				task.wait(0.01)
+				reloadMissileProgress += 0.01
+			end
+			reloadMissileProgress = 0
+			reloadingMissile = false
+			reloading = false
+
+			if StoredMissile > MissileData.Ammo then
+				StoredMissile-= MissileData.Ammo - MissileAmmo
+				MissileAmmo = MissileData.Ammo
+			else
+				MissileAmmo += StoredMissile
+				StoredMissile = 0
+			end
+		end
+	end
+end
+
+function DropBombs()
+	if not jetExists or not jet or not Handle then return end
+	if BombAmmo <= 0 then
+		if Handle:FindFirstChild("Click") then
+			Handle.Click:Play()
+		end
+		return
+	end
+
+	
+	local currentTime = tick()
+	if currentTime - lastBombDropTime < BOMB_COOLDOWN then
+		return
+	end
+
+	droppingBombs = true
+	lastBombDropTime = currentTime
+
+	task.spawn(function()
+		local bombsToDrop = BombData.BombsPerDrop
+		local bombsDropped = 0
+
+		while bombsDropped < bombsToDrop and jetExists and Handle do
+
+			local dropPosition = Handle.BombMuzzle.WorldCFrame * CFrame.new(0, -2, 0)
+
+			Evt.DropBomb:FireServer(dropPosition, jet)
+
+
+			BombAmmo = BombAmmo - 1
+			bombsDropped = bombsDropped + 1
+
+			if Handle.BombMuzzle:FindFirstChild("BombDrop") then
+				Handle.BombMuzzle.BombDrop:Play()
+			end
+
+			if bombsDropped < bombsToDrop then
+				task.wait(0.2)
+			end
+		end
+
+		droppingBombs = false
+
+		bombCooldown = true
+		task.wait(BOMB_COOLDOWN)
+		bombCooldown = false
+	end)
+end
+
+function VibrateController()
+	if UIS:GetGamepadConnected(Enum.UserInputType.Gamepad1) then
+		if HapticService:IsMotorSupported(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Large) then
+			HapticService:SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Large, 0.5)
+		end
+		if HapticService:IsMotorSupported(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Small) then
+			HapticService:SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Small, 0.5)
+		end
+	end
+end
+
+function UnVibrateController()
+	if UIS:GetGamepadConnected(Enum.UserInputType.Gamepad1) then
+		if HapticService:IsMotorSupported(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Large) then
+			HapticService:SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Large, 0)
+		end
+		if HapticService:IsMotorSupported(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Small) then
+			HapticService:SetMotor(Enum.UserInputType.Gamepad1, Enum.VibrationMotor.Small, 0)
+		end
+	end
+end
+
+function CheckForHumanoid(hitPart)
+	if not hitPart then
+		return false, nil
+	end
+
+	local humanoid = hitPart.Parent:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		return true, humanoid
+	end
+
+	humanoid = hitPart.Parent.Parent:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		return true, humanoid
+	end
+
+	return false, nil
+end
+
+function CheckForJet(hitPart)
+	if not hitPart then
+		return false, nil
+	end
+
+	if hitPart.Parent and hitPart.Parent.Name:match("'s Jet$") then
+		return true, hitPart.Parent
+	end
+
+	if hitPart.Parent and hitPart.Parent.Parent and hitPart.Parent.Parent.Name:match("'s Jet$") then
+		return true, hitPart.Parent.Parent
+	end
+
+	return false, nil
+end
+
+local IgnoreAccessoriesList = {
+	"Top",
+	"Helmet",
+	"Up",
+	"Down",
+	"Face",
+	"Olho",
+	"Headset",
+	"Numero",
+	"Vest",
+	"Chest",
+	"UpperTorso",
+	"Back",
+	"Belt",
+	"Leg1",
+	"Leg2",
+	"Arm1",
+	"Arm2"
+}
+
+local TorsoList = {
+	"UpperTorso",
+	"LowerTorso",
+	"Torso"
+}
+
+local LimbsList = {
+	"LeftFoot",
+	"LeftLowerLeg",
+	"LeftUpperLeg",
+	"RightFoot",
+	"RightLowerLeg",
+	"RightUpperLeg",
+	"LeftHand",
+	"LeftLowerArm",
+	"LeftUpperArm",
+	"RightHand",
+	"RightLowerArm",
+	"RightUpperArm",
+	"Left Arm",
+	"Right Arm",
+	"Left Leg",
+	"Right Leg",
+}
+
+local RicochetMaterialMaxAngles = gameRules.RicochetMaterialMaxAngles
+local RicochetLoss = gameRules.RicochetLoss
+local WallbangEnabled = gameRules.WallbangEnabled
+local WallbangDamage = gameRules.WallbangDamage
+local WallbangMaterialHardness = gameRules.WallbangMaterialHardness
+local WallbangSpecialNames = gameRules.WallbangSpecialNames
+
+function ShouldbeAddedtoIgnoreList(Part)
+	if (Part.CanCollide == false or Part.Transparency >= .9 or Part.Name == "ResistantGlass" or Part.Name == "Shard" or Part.Name == "Barrier") and 
+		Part.Name ~= "RightUpperLeg" and Part.Name ~= "RightLowerLeg" and Part.Name ~= "RightFoot" and 
+		Part.Name ~= "LeftUpperLeg" and Part.Name ~= "LeftLowerLeg" and Part.Name ~= "LeftFoot" and 
+		Part.Name ~= "RightUpperArm" and Part.Name ~= "RightLowerArm" and Part.Name ~= "RightHand" and 
+		Part.Name ~= "LeftUpperArm" and Part.Name ~= "LeftLowerArm" and Part.Name ~= "LeftHand" and 
+		Part.Name ~= "UpperTorso" and Part.Name ~= "LowerTorso" and Part.Name ~= "Torso" and 
+		Part.Name ~= "Right Arm" and Part.Name ~= "Left Arm" and Part.Name ~= "Left Leg" and 
+		Part.Name ~= "Right Leg" and Part.Name ~= "Neck" and Part.Name ~= "Head" and 
+		Part.Name ~= "Groin" and Part.Name ~= "Tree_Collision" and Part.Name ~= "BulletProtection" then
+		table.insert(Ignore_Model, Part)
+		return true
+	else 
+		return false
+	end
+end
+
+local raycastParams = RaycastParams.new()
+raycastParams.FilterDescendantsInstances = Ignore_Model
+raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+raycastParams.IgnoreWater = false
+
+function CastRay(Bullet, Origin, WeaponData)
+	local Hit2, Pos2, Norm2, Mat2
+	local raycastResult
+	local BulletVector
+	local WallbangRay
+
+	local PrevPos = Origin
+	local BulletPos = Bullet.Position
+	local TotalDistTraveled = 0
+	local recast
+	local BulletStopped = false
+	local WallbangParts = {}
+	local Debounce = false
+
+	local RicoHappened = false
+	local RicoPos = Vector3.new(0,0,0)
+
+	local maxDistance = WeaponData.BulletRange
+
+	local MPosition = cam.CFrame.Position
+	local MVector
+
+	MPosition = Handle.MGMuzzle.WorldPosition
+	MVector = Handle.MGMuzzle.WorldCFrame.LookVector
+
+	local WhizzedPlayers = {}
+	local SplashedPlayers = {}
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterDescendantsInstances = Ignore_Model
+	raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	raycastParams.IgnoreWater = false
+
+	while not BulletStopped do
+		Run.Heartbeat:wait()
+		BulletPos = Bullet.Position
+		TotalDistTraveled = TotalDistTraveled + (BulletPos - PrevPos).magnitude
+		if TotalDistTraveled > maxDistance then
+			if Bullet:FindFirstChild("Smoke") then
+				Debris:AddItem(Bullet.Smoke,6)
+				Bullet.Smoke.Parent = workspace
+			end
+			if Bullet:FindFirstChild("Fire") then
+				Debris:AddItem(Bullet.Fire,6)
+				Bullet.Fire.Parent = workspace
+			end
+			if Bullet:FindFirstChild("SmokeTrail") then
+				Debris:AddItem(Bullet.SmokeTrail,6)
+				Bullet.SmokeTrail.Parent = workspace
+			end
+			if Bullet:FindFirstChild("Trail") then
+				Debris:AddItem(Bullet.Trail,6)
+				Bullet.Trail.Parent = workspace
+			end
+			Bullet:Destroy()
+			break
+		end
+
+		for _, plyr in pairs(game.Players:GetPlayers()) do
+			if Debounce or plyr == plr or not plyr.Character or not plyr.Character:FindFirstChild('Head') or (plyr.Character.Head.Position - BulletPos).magnitude > 25 then continue; end;
+			Evt.Whizz:FireServer(plyr)
+			Evt.Suppression:FireServer(plyr,1,nil,nil)
+			Debounce = true
+		end
+
+		Hit2, Pos2, Norm2, Mat2 = workspace:FindPartOnRayWithIgnoreList(Ray.new(PrevPos, (BulletPos - PrevPos)*5), Ignore_Model, false, true)
+
+		local BulletRay = Ray.new(PrevPos, (BulletPos - PrevPos))
+		raycastResult = workspace:Raycast(PrevPos, (BulletPos - PrevPos), raycastParams)
+		BulletVector = BulletPos - PrevPos
+
+		for _, plyr in pairs(game.Players:GetPlayers()) do
+			if Debounce or plyr == plr or not plyr.Character or not plyr.Character:FindFirstChild('Head') or (plyr.Character.Head.Position - PrevPos).magnitude > 25 then continue; end;
+			Evt.Suppression:FireServer(plyr,1,nil,nil)
+			Debounce = true
+		end
+
+		if raycastResult then
+
+			local shouldIgnore = false
+
+			if Hit2 then
+				while not recast do
+					if Hit2 and ShouldbeAddedtoIgnoreList(Hit2) then
+						shouldIgnore = true
+						recast = true
+					end
+
+					if recast then
+						raycastParams.FilterDescendantsInstances = Ignore_Model
+
+						Hit2, Pos2, Norm2, Mat2 = workspace:FindPartOnRayWithIgnoreList(Ray.new(PrevPos, (BulletPos - PrevPos)*20), Ignore_Model, false, true);
+
+						raycastResult = workspace:Raycast(PrevPos, (BulletPos - PrevPos), raycastParams)
+						BulletVector = BulletPos - PrevPos
+						recast = false
+					else
+						break
+					end
+				end
+			end
+
+			
+			if shouldIgnore then
+				PrevPos = BulletPos
+				continue
+			end
+
+			if raycastResult and raycastResult.Instance then
+				local CastDist
+				local WallbangIgnore
+				if Ignore_Model then
+					WallbangIgnore = {table.unpack(Ignore_Model)}
+				else
+					WallbangIgnore = {}
+				end
+
+				local RayDirection = (BulletPos - PrevPos).Unit
+
+				while not BulletStopped do
+
+					if raycastResult and raycastResult.Instance and Bullet.AssemblyLinearVelocity.Magnitude >= 0 then
+						local FoundHuman,Victim = CheckForHumanoid(raycastResult.Instance)
+
+						local HitPart = raycastResult.Instance
+						TotalDistTraveled = (raycastResult.Position - Origin).Magnitude
+
+						if FoundHuman == true and Victim.Health > 0 then
+							local SKP_02 = SKP_01.."-"..plr.UserId
+							if HitPart.Name == "Head" or HitPart.Parent.Name == "Top" or HitPart.Parent.Name == "Headset" or HitPart.Parent.Name == "Olho" or HitPart.Parent.Name == "Face" or HitPart.Parent.Name == "Numero" then
+								Evt.Damage:InvokeServer(jet, Victim, TotalDistTraveled, 1, WeaponData, nil, nil, nil, SKP_02, WeaponData, nil, nil, nil)
+							elseif HitPart.Name == "Torso" or HitPart.Name == "UpperTorso" or HitPart.Name == "LowerTorso" or HitPart.Parent.Name == "Chest" or HitPart.Parent.Name == "Waist" or HitPart.Name == "Right Arm" or HitPart.Name == "Left Arm" or HitPart.Name == "RightUpperArm" or HitPart.Name == "RightLowerArm" or HitPart.Name == "RightHand" or HitPart.Name == "LeftUpperArm" or HitPart.Name == "LeftLowerArm" or HitPart.Name == "LeftHand" then				
+								Evt.Damage:InvokeServer(jet, Victim, TotalDistTraveled, 2, WeaponData, nil, nil, nil, SKP_02, WeaponData, nil, nil, nil)
+							elseif HitPart.Name == "Right Leg" or HitPart.Name == "Left Leg" or HitPart.Name == "RightUpperLeg" or HitPart.Name == "RightLowerLeg" or HitPart.Name == "RightFoot" or HitPart.Name == "LeftUpperLeg" or HitPart.Name == "LeftLowerLeg" or HitPart.Name == "LeftFoot" then
+								Evt.Damage:InvokeServer(jet, Victim, TotalDistTraveled, 2, WeaponData, nil, nil, nil, SKP_02, WeaponData, nil, nil, nil)		
+							end	
+						end
+
+						local FoundJet,EnemyJet = CheckForJet(raycastResult.Instance)
+
+						if FoundJet == true and EnemyJet.Info.Health.Value > 0 then
+							local SKP_02 = SKP_01.."-"..plr.UserId
+							Evt.JetDamage:InvokeServer(jet, EnemyJet, TotalDistTraveled, 1, WeaponData, nil, nil, nil, SKP_02, WeaponData, nil, nil, nil)
+						end
+
+						local WallbangParams = RaycastParams.new()
+						WallbangParams.FilterDescendantsInstances = {raycastResult.Instance}
+						WallbangParams.FilterType = Enum.RaycastFilterType.Include
+						local BulletPenetration = WeaponData.PenetrationPower / 50
+						local Hardness = WallbangMaterialHardness[tostring(raycastResult.Material.Name)]
+
+						if WallbangSpecialNames[raycastResult.Instance.Name] then
+							CastDist = BulletPenetration / WallbangSpecialNames[raycastResult.Instance.Name]
+						elseif Hardness then
+							CastDist = BulletPenetration / Hardness
+						else
+							CastDist = BulletPenetration / WallbangMaterialHardness["default"]
+						end
+
+						local CastDist2 = CastDist * (Bullet.AssemblyLinearVelocity.Magnitude / (WeaponData.MuzzleVelocity))
+						local WBRayPosition = raycastResult.Position + RayDirection * CastDist2
+						local WBRayVector = -RayDirection * CastDist2
+						WallbangRay = workspace:Raycast(WBRayPosition, WBRayVector, WallbangParams)
+						
+						if WallbangRay then
+							local thickness = (WallbangRay.Position - raycastResult.Position).Magnitude
+							local velocityMultiplier = 0
+							if not (table.find(LimbsList, raycastResult.Instance.Name) or table.find(TorsoList, raycastResult.Instance.Name) or raycastResult.Instance.Name == "Head") then
+								velocityMultiplier = math.max((Bullet.AssemblyLinearVelocity.Magnitude / (WeaponData.MuzzleVelocity)) - thickness, 0)
+							end
+
+							Bullet.AssemblyLinearVelocity = Bullet.AssemblyLinearVelocity * velocityMultiplier
+
+							table.insert(WallbangParts,WallbangRay.Instance)
+							table.insert(WallbangIgnore,WallbangRay.Instance)
+
+							
+							if not ShouldbeAddedtoIgnoreList(raycastResult.Instance) then
+								HitMod.HitEffect(Ignore_Model, raycastResult.Position, raycastResult.Instance, raycastResult.Normal, raycastResult.Material, WeaponData, WeaponData)
+
+								Evt.HitEffect:FireServer(raycastResult.Position, raycastResult.Instance, raycastResult.Normal, raycastResult.Material, WeaponData, WeaponData, WeaponData)
+
+							end
+
+							if not ShouldbeAddedtoIgnoreList(WallbangRay.Instance) then
+								HitMod.HitEffect(WallbangIgnore, WallbangRay.Position, WallbangRay.Instance, WallbangRay.Normal, WallbangRay.Material, WeaponData, WeaponData)
+
+								Evt.HitEffect:FireServer(WallbangRay.Position, WallbangRay.Instance, WallbangRay.Normal, WallbangRay.Material, WeaponData, WeaponData, WeaponData)
+
+							end
+
+							BulletVector = BulletPos - PrevPos
+
+							local params = RaycastParams.new()
+							params.FilterDescendantsInstances = WallbangIgnore
+							params.FilterType = Enum.RaycastFilterType.Exclude
+							params.IgnoreWater = false
+							raycastResult = workspace:Raycast(PrevPos, BulletVector, params)
+						else
+							
+							if not ShouldbeAddedtoIgnoreList(raycastResult.Instance) then
+								HitMod.HitEffect(Ignore_Model, raycastResult.Position, raycastResult.Instance, raycastResult.Normal, raycastResult.Material, WeaponData, WeaponData)
+								Evt.HitEffect:FireServer(raycastResult.Position, raycastResult.Instance, raycastResult.Normal, raycastResult.Material, WeaponData, WeaponData, WeaponData)
+
+							end
+
+							if (RicoPos - raycastResult.Position).Magnitude > 0.2 then
+								local Angle = math.deg(math.acos(BulletVector.Unit:Dot(raycastResult.Normal.Unit))) - 90
+								local RicochetMaxAngle = RicochetMaterialMaxAngles[tostring(raycastResult.Material.Name)]
+								if Angle < RicochetMaxAngle then
+									Bullet.Position = raycastResult.Position
+									Bullet.AssemblyLinearVelocity = (Bullet.AssemblyLinearVelocity.Magnitude * (BulletVector.Unit - (2 * BulletVector.Unit:Dot(raycastResult.Normal) * raycastResult.Normal))) * 0.35
+									RicoPos = raycastResult.Position
+									PrevPos = Bullet.Position
+									raycastResult = nil
+									RicoHappened = true
+								else
+									if Bullet:FindFirstChild("Smoke") then
+										Debris:AddItem(Bullet.Smoke,6)
+										Bullet.Smoke.Parent = workspace
+									end
+									if Bullet:FindFirstChild("Fire") then
+										Debris:AddItem(Bullet.Fire,6)
+										Bullet.Fire.Parent = workspace
+									end
+									if Bullet:FindFirstChild("SmokeTrail") then
+										Debris:AddItem(Bullet.SmokeTrail,6)
+										Bullet.SmokeTrail.Parent = workspace
+									end
+									if Bullet:FindFirstChild("Trail") then
+										Debris:AddItem(Bullet.Trail,6)
+										Bullet.Trail.Parent = workspace
+									end
+									Bullet:Destroy()
+									BulletStopped = true
+								end
+							else
+								if Bullet:FindFirstChild("Smoke") then
+									Debris:AddItem(Bullet.Smoke,6)
+									Bullet.Smoke.Parent = workspace
+								end
+								if Bullet:FindFirstChild("Fire") then
+									Debris:AddItem(Bullet.Fire,6)
+									Bullet.Fire.Parent = workspace
+								end
+								if Bullet:FindFirstChild("SmokeTrail") then
+									Debris:AddItem(Bullet.SmokeTrail,6)
+									Bullet.SmokeTrail.Parent = workspace
+								end
+								if Bullet:FindFirstChild("Trail") then
+									Debris:AddItem(Bullet.Trail,6)
+									Bullet.Trail.Parent = workspace
+								end
+								Bullet:Destroy()
+								BulletStopped = true
+							end
+						end
+					else
+						break
+					end
+				end
+			end
+		end
+		if RicoHappened then
+			RicoHappened = false
+		else 
+			PrevPos = BulletPos
+		end
+	end
+end
+
+
+function GuidedMissileTracking(Bullet, Origin, WeaponData, targetJet, targetHandle)
+	local maxDistance = WeaponData.BulletRange
+	local TotalDistTraveled = 0
+	local PrevPos = Origin
+	local BulletStopped = false
+	
+	
+	local missileSpeed = WeaponData.MuzzleVelocity
+	local turnSpeed = 8
+	local maxTurnAngle = math.rad(45)
+	
+	
+	local missileRayParams = RaycastParams.new()
+	missileRayParams.FilterDescendantsInstances = Ignore_Model
+	missileRayParams.FilterType = Enum.RaycastFilterType.Exclude
+	missileRayParams.IgnoreWater = false
+	
+	local lastUpdateTime = tick()
+	
+	while not BulletStopped do
+		Run.Heartbeat:Wait()
+		
+		
+		if not Bullet or not Bullet.Parent then
+			break
+		end
+		
+		local currentTime = tick()
+		local deltaTime = currentTime - lastUpdateTime
+		lastUpdateTime = currentTime
+		
+		local BulletPos = Bullet.Position
+		TotalDistTraveled = TotalDistTraveled + (BulletPos - PrevPos).Magnitude
+		
+		
+		if TotalDistTraveled > maxDistance then
+			CleanupMissile(Bullet)
+			break
+		end
+		
+		
+		local targetValid = targetJet and targetJet.Parent and targetHandle and targetHandle.Parent
+		
+		if targetValid then
+			
+			local toTarget = (targetHandle.Position - BulletPos).Unit
+			local currentDirection = Bullet.AssemblyLinearVelocity.Unit
+			
+			local dotProduct = currentDirection:Dot(toTarget)
+			local angle = math.acos(math.clamp(dotProduct, -1, 1))
+			
+			local lerpFactor = math.min(turnSpeed * deltaTime, 1)
+			
+			local newDirection
+			if angle > 0.001 then
+				
+				local maxLerp = maxTurnAngle / angle
+				lerpFactor = math.min(lerpFactor, maxLerp)
+				
+				newDirection = (currentDirection + (toTarget - currentDirection) * lerpFactor).Unit
+			else
+				newDirection = toTarget
+			end
+			
+			local currentSpeed = Bullet.AssemblyLinearVelocity.Magnitude
+			local newSpeed = math.max(currentSpeed, missileSpeed * 0.8)
+			Bullet.AssemblyLinearVelocity = newDirection * newSpeed
+			Bullet.CFrame = CFrame.new(BulletPos, BulletPos + newDirection)
+		end
+		local rayDirection = BulletPos - PrevPos
+		if rayDirection.Magnitude > 0 then
+			local raycastResult = workspace:Raycast(PrevPos, rayDirection * 1.5, missileRayParams)
+			
+			if raycastResult and raycastResult.Instance then
+				local hitPart = raycastResult.Instance
+				
+				if not ShouldbeAddedtoIgnoreList(hitPart) then
+					
+					local FoundHuman, Victim = CheckForHumanoid(hitPart)
+					if FoundHuman and Victim.Health > 0 then
+						local SKP_02 = SKP_01.."-"..plr.UserId
+						
+						Evt.Damage:InvokeServer(jet, Victim, TotalDistTraveled, 1, WeaponData, nil, nil, nil, SKP_02, WeaponData, nil, nil, nil)
+					end
+					
+					local FoundJet, EnemyJet = CheckForJet(hitPart)
+					if FoundJet and EnemyJet.Info.Health.Value > 0 then
+						local SKP_02 = SKP_01.."-"..plr.UserId
+						Evt.JetDamage:InvokeServer(jet, EnemyJet, TotalDistTraveled, 1, WeaponData, nil, nil, nil, SKP_02, WeaponData, nil, nil, nil)
+					end
+					
+					HitMod.HitEffect(Ignore_Model, raycastResult.Position, raycastResult.Instance, raycastResult.Normal, raycastResult.Material, WeaponData, WeaponData)
+					Evt.HitEffect:FireServer(raycastResult.Position, raycastResult.Instance, raycastResult.Normal, raycastResult.Material, WeaponData, WeaponData, WeaponData)
+					
+					CleanupMissile(Bullet)
+					BulletStopped = true
+					break
+				else
+					missileRayParams.FilterDescendantsInstances = Ignore_Model
+				end
+			end
+		end
+		
+		for _, plyr in pairs(game.Players:GetPlayers()) do
+			if plyr ~= plr and plyr.Character and plyr.Character:FindFirstChild('Head') then
+				if (plyr.Character.Head.Position - BulletPos).Magnitude < 25 then
+					Evt.Whizz:FireServer(plyr)
+					Evt.Suppression:FireServer(plyr, 1, nil, nil)
+				end
+			end
+		end
+		
+		PrevPos = BulletPos
+	end
+end
+
+function CleanupMissile(Bullet)
+	if not Bullet then return end
+	
+	if Bullet:FindFirstChild("Smoke") then
+		Debris:AddItem(Bullet.Smoke, 6)
+		Bullet.Smoke.Parent = workspace
+	end
+	if Bullet:FindFirstChild("Fire") then
+		Debris:AddItem(Bullet.Fire, 6)
+		Bullet.Fire.Parent = workspace
+	end
+	if Bullet:FindFirstChild("SmokeTrail") then
+		Debris:AddItem(Bullet.SmokeTrail, 6)
+		Bullet.SmokeTrail.Parent = workspace
+	end
+	if Bullet:FindFirstChild("Trail") then
+		Debris:AddItem(Bullet.Trail, 6)
+		Bullet.Trail.Parent = workspace
+	end
+	
+	Bullet:Destroy()
+end
+
+
+function CreateBullet(WeaponData, Angle, Missile)
+
+	local Bullet = Instance.new("Part", Game_Workspace.Client)
+	Bullet.Name = plr.Name.."_Bullet"
+	Bullet.CanCollide = false
+	Bullet.Color = WeaponData.TracerColor 
+	Bullet.Shape = Enum.PartType.Ball
+	Bullet.Transparency = 1
+	Bullet.Size = Vector3.new(1,1,1)
+
+	local Origin
+	local Direction
+	Origin = MGMuzzle.WorldPosition
+	Direction = MGMuzzle.WorldCFrame.LookVector
+
+	local BulletCF = CFrame.new(Origin, Origin + Direction) 
+	local BColor = Color3.fromRGB(255,255,255)
+	local balaspread
+
+	balaspread = CFrame.Angles(
+		math.rad(RAND(-BSpread, BSpread) / 10),
+		math.rad(RAND(-BSpread, BSpread) / 10),
+		math.rad(RAND(-BSpread, BSpread) / 10)
+	)
+
+	Direction = (balaspread * CFrame.new(0, 0, -1)).LookVector
+	Direction = MGMuzzle.CFrame.Rotation * Direction
+
+	local Visivel = true
+	BColor = WeaponData.TracerColor
+
+	if Visivel then
+		Evt.ServerBullet:FireServer(Origin, Direction, WeaponData, nil, WeaponData,false, jet,LockTarget)
+
+		if WeaponData.Tracer == true then
+			local At1 = Instance.new("Attachment")
+			At1.Name = "At1"
+			At1.Position = Vector3.new(-(.1),0,0)
+			At1.Parent = Bullet
+
+			local At2 = Instance.new("Attachment")
+			At2.Name = "At2"
+			At2.Position = Vector3.new((.2),0,0)
+			At2.Parent = Bullet
+
+			local Particles = Instance.new("Trail")
+			Particles.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1, 0);
+				NumberSequenceKeypoint.new(1, 1);
+			})
+
+			local bulletLifeTime = WeaponData.BulletLifeTime
+
+			task.delay(0.2,function()
+				Particles.Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, WeaponData.BulletTransparency, 0);
+					NumberSequenceKeypoint.new(0.5, WeaponData.BulletTransparency, 0);
+					NumberSequenceKeypoint.new(1, 1);
+				})
+			end)
+
+			Particles.WidthScale = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, WeaponData.BulletSize, 0);
+				NumberSequenceKeypoint.new(0.5, WeaponData.BulletSize, 0);
+				NumberSequenceKeypoint.new(1, WeaponData.BulletSize/10);
+			})
+
+			Particles.Color = ColorSequence.new(BColor)
+			Particles.Texture = "rbxassetid://14846394635"
+			Particles.TextureMode = Enum.TextureMode.Stretch
+
+			if WeaponData.GlowingBullet == true then
+				Particles.Brightness = 10
+				Particles.LightInfluence = 0
+				Particles.LightEmission = 1
+			end
+
+			Particles.FaceCamera = true
+			Particles.LightEmission = 1
+			Particles.LightInfluence = 0
+			Particles.Lifetime = bulletLifeTime
+			Particles.Attachment0 = At1
+			Particles.Attachment1 = At2
+			Particles.Parent = Bullet
+		end
+
+		if WeaponData.BulletFlare == true then
+			local bg = Instance.new("BillboardGui", Bullet)
+			bg.Adornee = Bullet
+			bg.Enabled = false
+			local flashsize = math.random(75, 100)/10
+			bg.Size = UDim2.new(flashsize, 0, flashsize, 0)
+			bg.LightInfluence = 0
+			bg.Brightness = 20
+			local flash = Instance.new("ImageLabel", bg)
+			flash.BackgroundTransparency = 1
+			flash.Size = UDim2.new(1, 0, 1, 0)
+			flash.Position = UDim2.new(0, 0, 0, 0)
+			flash.Image = "http://www.roblox.com/asset/?id=1047066405"
+			flash.ImageTransparency = math.random(2, 5)/15
+			flash.ImageColor3 = BColor
+
+			spawn(function()
+				task.wait(.1)
+				if not Bullet:FindFirstChild("BillboardGui") then return; end;
+				Bullet.BillboardGui.Enabled = true
+			end)
+		end
+	end
+
+	local BulletMass = Bullet:GetMass()
+	local Force = Vector3.new(0,(BulletMass) * (workspace.Gravity) - (WeaponData.BulletDrop) * (workspace.Gravity), 0)
+	local BF = Instance.new("BodyForce",Bullet)
+
+	Bullet.CFrame = BulletCF
+
+	Bullet:ApplyImpulse(Direction * WeaponData.MuzzleVelocity)
+
+	BF.Force = Force
+	Bullet.CollisionGroup = "Bullet"
+	game.Debris:AddItem(Bullet, 5)
+
+	CastRay(Bullet, Origin, WeaponData)
+end
+
+function CreateMissile(WeaponData, Angle, Missile)
+
+	local Bullet = Instance.new("Part", Game_Workspace.Client)
+	Bullet.Name = plr.Name.."_Missile"
+	Bullet.CanCollide = false
+	Bullet.Color = WeaponData.TracerColor 
+	Bullet.Shape = Enum.PartType.Ball
+	Bullet.Transparency = 1
+	Bullet.Size = Vector3.new(1,1,1)
+
+	local Origin
+	local Direction
+
+	
+	Origin = MissileMuzzle.WorldPosition
+	Direction = MGMuzzle.WorldCFrame.LookVector
+
+	local BulletCF = CFrame.new(Origin, Origin + Direction) 
+	local BColor = Color3.fromRGB(255,255,255)
+	local balaspread
+
+	balaspread = CFrame.Angles(
+		math.rad(RAND(-BSpread, BSpread) / 20),
+		math.rad(RAND(-BSpread, BSpread) / 20),
+		math.rad(RAND(-BSpread, BSpread) / 20)
+	)
+
+	Direction = (balaspread * CFrame.new(0, 0, -1)).LookVector
+	Direction = MGMuzzle.CFrame.Rotation * Direction
+
+	local BulletCF = CFrame.new(Origin, Origin + Direction) 
+	local BColor = Color3.fromRGB(255,255,255)
+
+	local Visivel = true
+	BColor = WeaponData.TracerColor
+
+	
+	local missileTarget = LockTarget
+	local missileTargetHandle = nil
+	if missileTarget then
+		missileTargetHandle = missileTarget:FindFirstChild("Handle")
+	end
+	
+
+
+	if Visivel then
+		Evt.ServerMissile:FireServer(Origin, Direction, WeaponData, jet, missileTarget)
+
+		if WeaponData.Tracer == true then
+			local At1 = Instance.new("Attachment")
+			At1.Name = "At1"
+			At1.Position = Vector3.new(-(.1),0,0)
+			At1.Parent = Bullet
+
+			local At2 = Instance.new("Attachment")
+			At2.Name = "At2"
+			At2.Position = Vector3.new((.2),0,0)
+			At2.Parent = Bullet
+
+			local Particles = Instance.new("Trail")
+			Particles.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1, 0);
+				NumberSequenceKeypoint.new(1, 1);
+			})
+
+			local bulletLifeTime = WeaponData.BulletLifeTime
+
+			task.delay(0.2,function()
+				Particles.Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, WeaponData.BulletTransparency, 0);
+					NumberSequenceKeypoint.new(0.5, WeaponData.BulletTransparency, 0);
+					NumberSequenceKeypoint.new(1, 1);
+				})
+			end)
+
+			Particles.WidthScale = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, WeaponData.BulletSize, 0);
+				NumberSequenceKeypoint.new(0.5, WeaponData.BulletSize, 0);
+				NumberSequenceKeypoint.new(1, WeaponData.BulletSize/10);
+			})
+
+			Particles.Color = ColorSequence.new(BColor)
+			Particles.Texture = "rbxassetid://14846394635"
+			Particles.TextureMode = Enum.TextureMode.Stretch
+
+			if WeaponData.GlowingBullet == true then
+				Particles.Brightness = 10
+				Particles.LightInfluence = 0
+				Particles.LightEmission = 1
+			end
+
+			Particles.FaceCamera = true
+			Particles.LightEmission = 1
+			Particles.LightInfluence = 0
+			Particles.Lifetime = bulletLifeTime
+			Particles.Attachment0 = At1
+			Particles.Attachment1 = At2
+			Particles.Parent = Bullet
+		end
+		
+		
+
+		if WeaponData.BulletFlare == true then
+			local bg = Instance.new("BillboardGui", Bullet)
+			bg.Adornee = Bullet
+			bg.Enabled = false
+			local flashsize = math.random(75, 100)/10
+			bg.Size = UDim2.new(flashsize, 0, flashsize, 0)
+			bg.LightInfluence = 0
+			bg.Brightness = 20
+			local flash = Instance.new("ImageLabel", bg)
+			flash.BackgroundTransparency = 1
+			flash.Size = UDim2.new(1, 0, 1, 0)
+			flash.Position = UDim2.new(0, 0, 0, 0)
+			flash.Image = "http://www.roblox.com/asset/?id=1047066405"
+			flash.ImageTransparency = math.random(2, 5)/15
+			flash.ImageColor3 = BColor
+
+			spawn(function()
+				task.wait(.1)
+				if not Bullet:FindFirstChild("BillboardGui") then return; end;
+				Bullet.BillboardGui.Enabled = true
+			end)
+		end
+	end
+
+	if Missile then
+		Engine.FX.SmokeTrail:Clone().Parent = Bullet
+	end
+	
+	local Mesh = Instance.new("SpecialMesh")
+	Mesh.Parent = Bullet
+	Mesh.MeshId = "http://www.roblox.com/asset/?id=2251534"
+	Mesh.MeshType = "FileMesh"
+	Mesh.Scale = Vector3.new(0.5,0.5,0.5)
+	Bullet.Color = Color3.new(0.4,0.4,0.5)
+	Bullet.Transparency = 0
+	local MissileSound = Engine.FX.MissileAir:Clone()
+	MissileSound.Parent = Bullet
+	MissileSound.Playing = true
+
+	local BulletMass = Bullet:GetMass()
+	local Force = Vector3.new(0,(BulletMass) * (workspace.Gravity) - (WeaponData.BulletDrop) * (workspace.Gravity), 0)
+	local BF = Instance.new("BodyForce",Bullet)
+
+	Bullet.CFrame = BulletCF
+
+	
+	Bullet:ApplyImpulse(Direction * WeaponData.MuzzleVelocity)
+
+	BF.Force = Force
+	Bullet.CollisionGroup = "Bullet"
+	game.Debris:AddItem(Bullet, 8)
+
+	
+	if missileTargetHandle then
+		task.spawn(function()
+			GuidedMissileTracking(Bullet, Origin, WeaponData, missileTarget, missileTargetHandle)
+		end)
+	else
+		
+		CastRay(Bullet, Origin, WeaponData)
+	end
+	
+	if LockTarget and LockTarget:FindFirstChild("Handle") then
+		
+		Evt.RegisterMissile:FireServer(LockTarget)
+	end
+end
+
+function GunFx(Muzzle)
+
+	local newSound = Muzzle.Fire:Clone()
+
+	newSound.Parent = Muzzle
+	newSound.Name = "Firing"
+	if newSound.Volume > 1 then
+		newSound.Volume = 1
+	end
+	if isInCockpit and newSound:FindFirstChild("ReverbSoundEffect") then
+		newSound.ReverbSoundEffect.Enabled = true
+
+	end
+	
+	newSound.PlayOnRemove = true
+	newSound:Destroy()
+
+
+	if Muzzle:FindFirstChild("Echo") then
+		local newSound = Muzzle.Echo:Clone()
+		newSound.Parent = Muzzle
+		newSound.Name = "FireEcho"
+		if newSound.Volume > 1 then
+			newSound.Volume = 1
+		end
+		if isInCockpit and newSound:FindFirstChild("ReverbSoundEffect") then
+			newSound.ReverbSoundEffect.Enabled = true
+		end
+		
+		newSound.PlayOnRemove = true
+		newSound:Destroy()
+	end
+	if Muzzle:FindFirstChild("Bass") then
+		local newSound = Muzzle.Bass:Clone()
+		newSound.Parent = Muzzle
+		newSound.Name = "FireBass"
+		if newSound.Volume > 1 then
+			newSound.Volume = 1
+		end
+		
+		newSound.PlayOnRemove = true
+		newSound:Destroy()
+	end
+
+	if Muzzle:FindFirstChild("ADSDisconnect") then
+
+		local newSound = Muzzle.ADSDisconnect:Clone()
+		newSound.Parent = Muzzle
+		newSound.Name = "FireADSDisconnect"
+		if newSound.Volume > 1 then
+			newSound.Volume = 1
+		end
+		
+
+		newSound.PlayOnRemove = true
+		newSound:Destroy()
+	end
+	if Muzzle:FindFirstChild("ADSMech") then
+		local newSound = Muzzle.ADSMech:Clone()
+		newSound.Parent = Muzzle
+		newSound.Name = "FireADSMech"
+		if newSound.Volume > 1 then
+			newSound.Volume = 1
+		end
+		
+		newSound.PlayOnRemove = true
+		newSound:Destroy()
+	end
+
+
+	if Muzzle:FindFirstChild("FlashFX") then
+		Muzzle["FlashFX"].Enabled = true
+		task.delay(0.05,function()
+			if Muzzle:FindFirstChild("FlashFX") then
+				Muzzle["FlashFX"].Enabled = false
+			end
+		end)
+	end
+
+	if Muzzle:FindFirstChild("FlashFX[Flash]") then
+		Muzzle["FlashFX[Flash]"]:Emit(math.random(5,10))
+	end
+
+	if Muzzle:FindFirstChild("FlashFX[Right]") then
+		Muzzle["FlashFX[Right]"]:Emit(math.random(5,10))
+	end
+	if Muzzle:FindFirstChild("FlashFX[Left]") then
+		Muzzle["FlashFX[Left]"]:Emit(math.random(5,10))
+	end
+	if Muzzle:FindFirstChild("Smoke") then
+		Muzzle["Smoke"]:Emit(math.random(20,30))
+	end
+
+	if Muzzle:FindFirstChild("Smoke2") then
+		Muzzle["Smoke2"]:Emit(math.random(20,30))
+	end
+	if Muzzle:FindFirstChild("Smoke3") then
+		Muzzle["Smoke3"]:Emit(math.random(20,30))
+	end
+
+	if BSpread then
+		BSpread = math.min((GunData.MaxSpread * 1.6), BSpread + GunData.AimInaccuracyStepAmount)
+	end
+
+	generateBullet = generateBullet + 1
+	LastSpreadUpdate = time()
+end
+
+function Shoot(WeaponData, Angle)
+	if not jetExists or not jet then
+		return
+	end
+	if WeaponData and WeaponData.Type == "Gun" and not shooting and not reloading then
+
+		if CurrentFireMode ~= "MachineGun" then
+			mouse1down = false
+			return
+		end
+
+		if MGAmmo <= 0 then
+			MGMuzzle.Click:Play()
+			mouse1down = false
+			return
+		end
+
+		mouse1down = true
+
+		task.delay(0, function()
+			if WeaponData and MGMuzzle and MGMuzzle.WorldPosition and jetExists then
+				while mouse1down and WeaponData and MGMuzzle and MGMuzzle.WorldPosition and jetExists do
+					if shooting or MGAmmo <= 0 then
+						break
+					end
+					shooting = true	
+					Evt.Atirar:FireServer(MGMuzzle,false,false,MGMuzzle.WorldPosition,jet)
+
+					task.spawn(CreateBullet,WeaponData, Angle,false)
+					MGAmmo = MGAmmo - 1
+					GunFx(MGMuzzle)
+					
+					VibrateController()
+					task.wait(60/WeaponData.ShootRate)
+					shooting = false
+					UnVibrateController()
+				end 
+			end
+		end)
+	elseif WeaponData and WeaponData.Type == "Missile" and not shooting and not reloading then
+
+		
+		if MissileAmmo <= 0 then
+			MGMuzzle.Click:Play()
+			mouse1down = false
+			return
+		end
+
+		mouse1down = true
+
+		task.delay(0, function()
+			if WeaponData and MissileMuzzle and MissileMuzzle.WorldPosition and jetExists then
+				shooting = true	
+				Evt.Atirar:FireServer(MissileMuzzle,false,false,MissileMuzzle.WorldPosition,jet)
+
+				
+				local currentLockTarget = LockTarget
+
+				task.spawn(CreateMissile,WeaponData, Angle, true)
+				MissileAmmo = MissileAmmo - 1
+				GunFx(MissileMuzzle)
+
+				
+				LockTarget = nil
+				LockingTarget = nil
+				LockProgress = 0
+				lastBeepTime = 0
+				hasPlayedLockSound = false
+				if lockIndicator then
+					lockIndicator.Visible = false
+				end
+
+				
+				VibrateController()
+				if MissileMuzzle and MissileMuzzle.Name == "MissileMuzzle1" then
+					MissileMuzzle = Handle:FindFirstChild("MissileMuzzle2")
+				elseif MissileMuzzle and MissileMuzzle.Name == "MissileMuzzle2" then
+					MissileMuzzle = Handle:FindFirstChild("MissileMuzzle1")
+				end
+				task.wait(60/WeaponData.ShootRate)
+				shooting = false
+				UnVibrateController()
+			end
+		end)
+	end
+end
+
+local function calculateAngularVelocity(currentRot, previousRot, deltaTime)
+	if deltaTime <= 0 then return 0 end
+
+	local rotDifference = previousRot:Inverse() * currentRot
+	local _, _, _, r00, r01, r02, r10, r11, r12, r20, r21, r22 = rotDifference:GetComponents()
+
+	local trace = r00 + r11 + r22
+	local angle = math.acos(math.clamp((trace - 1) / 2, -1, 1))
+
+	return angle / deltaTime
+end
+
+function UpdateLighting()
+	local lightingFolder = ReplicatedStorage.Lighting
+
+	if lightingFolder:FindFirstChild("Asphalt") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Asphalt, lightingFolder.Asphalt.Value)
+	end
+	if lightingFolder:FindFirstChild("Basalt") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Basalt, lightingFolder.Basalt.Value)
+	end
+	if lightingFolder:FindFirstChild("Brick") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Brick, lightingFolder.Brick.Value)
+	end
+	if lightingFolder:FindFirstChild("Cobblestone") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Cobblestone, lightingFolder.Cobblestone.Value)
+	end
+	if lightingFolder:FindFirstChild("Concrete") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Concrete, lightingFolder.Concrete.Value)
+	end
+	if lightingFolder:FindFirstChild("CrackedLava") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.CrackedLava, lightingFolder.CrackedLava.Value)
+	end
+	if lightingFolder:FindFirstChild("Glacier") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Glacier, lightingFolder.Glacier.Value)
+	end
+	if lightingFolder:FindFirstChild("Grass") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Grass, lightingFolder.Grass.Value)
+	end
+	if lightingFolder:FindFirstChild("Ground") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Ground, lightingFolder.Ground.Value)
+	end
+	if lightingFolder:FindFirstChild("Ice") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Ice, lightingFolder.Ice.Value)
+	end
+	if lightingFolder:FindFirstChild("LeafyGrass") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.LeafyGrass, lightingFolder.LeafyGrass.Value)
+	end
+	if lightingFolder:FindFirstChild("Limestone") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Limestone, lightingFolder.Limestone.Value)
+	end
+	if lightingFolder:FindFirstChild("Mud") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Mud, lightingFolder.Mud.Value)
+	end
+	if lightingFolder:FindFirstChild("Pavement") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Pavement, lightingFolder.Pavement.Value)
+	end
+	if lightingFolder:FindFirstChild("Rock") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Rock, lightingFolder.Rock.Value)
+	end
+	if lightingFolder:FindFirstChild("Salt") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Salt, lightingFolder.Salt.Value)
+	end
+	if lightingFolder:FindFirstChild("Sand") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Sand, lightingFolder.Sand.Value)
+	end
+	if lightingFolder:FindFirstChild("Sandstone") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Sandstone, lightingFolder.Sandstone.Value)
+	end
+	if lightingFolder:FindFirstChild("Slate") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Slate, lightingFolder.Slate.Value)
+	end
+	if lightingFolder:FindFirstChild("Snow") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.Snow, lightingFolder.Snow.Value)
+	end
+	if lightingFolder:FindFirstChild("WoodPlanks") then
+		game.Workspace.Terrain:SetMaterialColor(Enum.Material.WoodPlanks, lightingFolder.WoodPlanks.Value)
+	end
+
+	if lightingFolder:FindFirstChild("ClockTime") then
+		TS:Create(game.Lighting, TweenInfo.new(0.02), {ClockTime = lightingFolder.ClockTime.Value}):Play()
+	end
+
+
+
+	if CameraMode == "BombCam" then
+		lightingFolder = ReplicatedStorage.HeatLighting
+	end
+	
+	if lightingFolder:FindFirstChild("Ambient") then
+		TS:Create(game.Lighting, TweenInfo.new(0.02), {Ambient = lightingFolder.Ambient.Value}):Play()
+	end
+	if lightingFolder:FindFirstChild("Brightness") then
+		TS:Create(game.Lighting, TweenInfo.new(0.02), {Brightness = lightingFolder.Brightness.Value}):Play()
+	end
+	if lightingFolder:FindFirstChild("ColorShift_Bottom") then
+		TS:Create(game.Lighting, TweenInfo.new(0.02), {ColorShift_Bottom = lightingFolder.ColorShift_Bottom.Value}):Play()
+	end
+	if lightingFolder:FindFirstChild("ColorShift_Top") then
+		TS:Create(game.Lighting, TweenInfo.new(0.02), {ColorShift_Top = lightingFolder.ColorShift_Top.Value}):Play()
+	end
+	if lightingFolder:FindFirstChild("EnvironmentDiffuseScale") then
+		TS:Create(game.Lighting, TweenInfo.new(0.02), {EnvironmentDiffuseScale = lightingFolder.EnvironmentDiffuseScale.Value}):Play()
+	end
+	if lightingFolder:FindFirstChild("EnvironmentSpecularScale") then
+		TS:Create(game.Lighting, TweenInfo.new(0.02), {EnvironmentSpecularScale = lightingFolder.EnvironmentSpecularScale.Value}):Play()
+	end
+	if lightingFolder:FindFirstChild("OutdoorAmbient") then
+		TS:Create(game.Lighting, TweenInfo.new(0.02), {OutdoorAmbient = lightingFolder.OutdoorAmbient.Value}):Play()
+	end
+	if lightingFolder:FindFirstChild("ShadowSoftness") then
+		TS:Create(game.Lighting, TweenInfo.new(0.02), {ShadowSoftness = lightingFolder.ShadowSoftness.Value}):Play()
+	end
+
+	if lightingFolder:FindFirstChild("ExposureCompensation") then
+		TS:Create(game.Lighting, TweenInfo.new(0.02, Enum.EasingStyle.Back), {ExposureCompensation = lightingFolder.ExposureCompensation.Value}):Play()
+	end
+
+	local atmosphere = lightingFolder:FindFirstChildOfClass("Atmosphere")
+	if atmosphere and game.Lighting:FindFirstChildOfClass("Atmosphere") then
+		TS:Create(game.Lighting.Atmosphere, TweenInfo.new(0.02), {Density = 0.15}):Play()
+		TS:Create(game.Lighting.Atmosphere, TweenInfo.new(0.02), {Offset = atmosphere.Offset}):Play()
+		TS:Create(game.Lighting.Atmosphere, TweenInfo.new(0.02), {Color = atmosphere.Color}):Play()
+		TS:Create(game.Lighting.Atmosphere, TweenInfo.new(0.02), {Decay = atmosphere.Decay}):Play()
+		TS:Create(game.Lighting.Atmosphere, TweenInfo.new(0.02), {Glare = atmosphere.Glare}):Play()
+		TS:Create(game.Lighting.Atmosphere, TweenInfo.new(0.02), {Haze = atmosphere.Haze}):Play()
+	end
+
+	local bloom = lightingFolder:FindFirstChildOfClass("BloomEffect")
+	if bloom and game.Lighting:FindFirstChildOfClass("BloomEffect") then
+		TS:Create(game.Lighting.Bloom, TweenInfo.new(0.02), {Size = bloom.Size}):Play()
+		TS:Create(game.Lighting.Bloom, TweenInfo.new(0.02), {Threshold = bloom.Threshold}):Play()
+		TS:Create(game.Lighting.Bloom, TweenInfo.new(0.02), {Intensity = bloom.Intensity}):Play()
+	end
+
+	local clouds = lightingFolder:FindFirstChildOfClass("Clouds")
+	if clouds and game.Workspace.Terrain:FindFirstChildOfClass("Clouds") then
+		TS:Create(game.Workspace.Terrain.Clouds, TweenInfo.new(0.02), {Cover = clouds.Cover}):Play()
+		TS:Create(game.Workspace.Terrain.Clouds, TweenInfo.new(0.02), {Density = clouds.Density}):Play()
+		TS:Create(game.Workspace.Terrain.Clouds, TweenInfo.new(0.02), {Color = clouds.Color}):Play()
+	end
+
+	local blur = lightingFolder:FindFirstChildOfClass("BlurEffect")
+	if blur and game.Lighting:FindFirstChildOfClass("BlurEffect") then
+		TS:Create(game.Lighting.Blur, TweenInfo.new(0.02), {Size = blur.Size}):Play()
+	end
+
+	local colorCorrection = lightingFolder:FindFirstChildOfClass("ColorCorrectionEffect")
+	if colorCorrection and game.Lighting:FindFirstChildOfClass("ColorCorrectionEffect") then
+		TS:Create(game.Lighting.ColorCorrection, TweenInfo.new(0.02), {Saturation = colorCorrection.Saturation}):Play()
+		TS:Create(game.Lighting.ColorCorrection, TweenInfo.new(0.02), {Contrast = colorCorrection.Contrast}):Play()
+		TS:Create(game.Lighting.ColorCorrection, TweenInfo.new(0.02), {Brightness = colorCorrection.Brightness}):Play()
+		TS:Create(game.Lighting.ColorCorrection, TweenInfo.new(0.02), {TintColor = colorCorrection.TintColor}):Play()
+	end
+
+	
+	local depthOfField = lightingFolder:FindFirstChildOfClass("DepthOfFieldEffect")
+	if depthOfField and game.Lighting:FindFirstChildOfClass("DepthOfFieldEffect") then
+		TS:Create(game.Lighting.DepthOfField, TweenInfo.new(0.02), {FarIntensity = depthOfField.FarIntensity}):Play()
+		TS:Create(game.Lighting.DepthOfField, TweenInfo.new(0.02), {FocusDistance = depthOfField.FocusDistance}):Play()
+		TS:Create(game.Lighting.DepthOfField, TweenInfo.new(0.02), {InFocusRadius = depthOfField.InFocusRadius}):Play()
+		TS:Create(game.Lighting.DepthOfField, TweenInfo.new(0.02), {NearIntensity = depthOfField.NearIntensity}):Play()
+	end
+
+	
+	local sunRays = lightingFolder:FindFirstChildOfClass("SunRaysEffect")
+	if sunRays and game.Lighting:FindFirstChildOfClass("SunRaysEffect") then
+		TS:Create(game.Lighting.SunRays, TweenInfo.new(0.02), {Spread = sunRays.Spread}):Play()
+		TS:Create(game.Lighting.SunRays, TweenInfo.new(0.02), {Intensity = sunRays.Intensity}):Play()
+	end
+
+end
+
+local lastLightingUpdate = 0
+local LIGHTING_UPDATE_INTERVAL = 2
+
+function startJetLoop()
+	if renderSteppedConnection then
+		renderSteppedConnection:Disconnect()
+	end
+
+	BombAmmo = BombData.AmmoInGun or 4
+	StoredBombs = 0
+
+	MGAmmo = GunData.AmmoInGun
+
+	MissileAmmo = MissileData.AmmoInGun
+
+	StoredMG = GunData.StoredAmmo
+
+	StoredMissile = MissileData.StoredAmmo
+
+
+	for i,v in pairs(jet:GetChildren()) do
+		if v:IsA("MeshPart") then
+			v.Touched:Connect(function(Part)
+				if Part:IsA("BasePart") and Part.CollisionGroup == "Default" then
+					Humanoid.Health = 0
+					destroyJet()
+				end
+			end)
+		end
+	end
+
+
+	table.insert(Ignore_Model,jet)
+
+	renderSteppedConnection = Run.RenderStepped:Connect(function(step)
+		if not jetExists or not jet or not jet.Parent then
+			return
+		end
+
+		if tick() - lastLightingUpdate > LIGHTING_UPDATE_INTERVAL then
+			lastLightingUpdate = tick()
+			UpdateLighting()
+		end
+
+		if jet.Info.Health.Value <= 0 then
+			Humanoid.Health = 0
+			destroyJet()
+		end
+
+		if lastGrain >= math.random(0.025,0.05) then
+			lastGrain = 0
+			BombGUI.Grain.Image = 'rbxassetid://'..Grains[math.random(1,#Grains)]
+		else
+			lastGrain+= step
+		end
+
+		timeSinceLastUpdate = timeSinceLastUpdate + step
+		timeSinceLastEffectsUpdate = timeSinceLastEffectsUpdate + step
+
+		updateThumbsticks()
+		updateControllerAim()
+		updateControllerMovement()
+		if CameraMode == "BombCam" or CameraMode == "RearCam" then
+			
+			if jet and Handle then
+				local camAttachment = Handle:FindFirstChild(CameraMode == "BombCam" and "Cam3" or "Cam4", true)
+				if camAttachment then
+					
+					cam.CFrame = camAttachment.WorldCFrame
+
+					
+					if FrozenJetRotation then
+						local targetCFrame = CFrame.new(Handle.Position) * FrozenJetRotation
+						local targetVelocity = FrozenJetRotation.LookVector * currentSpeed
+						local currentVelocity = Handle.AssemblyLinearVelocity or Handle.Velocity
+						local velocity = currentVelocity:Lerp(targetVelocity, 1 - driftFactor)
+
+						
+						if timeSinceLastUpdate >= updateInterval then
+							UpdateJetMovement:FireServer(velocity, targetCFrame)
+							timeSinceLastUpdate = 0
+						end
+					end
+				else
+					
+					ExitSpecialCam()
+				end
+			else
+				
+				ExitSpecialCam()
+			end
+			cam.FieldOfView = 65
+
+			
+			return
+		else
+			
+			if isInCockpit then
+				cam.FieldOfView = 90 * (0.5+(currentSpeed/maxSpeed)/2)
+				cam.CFrame = jetCam.WorldCFrame
+			else
+				cam.FieldOfView = originalFieldOfView * (0.5+(currentSpeed/maxSpeed)/1.5)
+				cam.CFrame = jetCam2.WorldCFrame
+			end
+		end
+
+		if keysPressed.Forward then
+			currentSpeed = math.min(currentSpeed + speedChangeRate * step, maxSpeed)
+		end
+		if keysPressed.Backward then
+			currentSpeed = math.max(currentSpeed - decelerationRate * step, minSpeed)
+		end
+
+		if not keysPressed.Forward and not keysPressed.Backward then
+			local naturalDecel = 5
+			if currentSpeed > baseSpeed then
+				currentSpeed = math.max(currentSpeed - naturalDecel * step, baseSpeed)
+			elseif currentSpeed < baseSpeed then
+				currentSpeed = math.min(currentSpeed + naturalDecel * step, baseSpeed)
+			end
+		end
+
+		if BSpread then
+			local currTime = time()
+			if currTime - LastSpreadUpdate > (5/GunData.ShootRate) * 2 and BSpread > GunData.MinSpread then
+				BSpread = math.max(GunData.MinSpread, BSpread - GunData.AimInaccuracyDecrease)
+			end
+		end
+
+		local targetYawTilt = 0
+		if keysPressed.Left then
+			targetYawTilt = yawTiltAmount
+		end
+		if keysPressed.Right then
+			targetYawTilt = -yawTiltAmount
+		end
+		yawTilt = yawTilt + (targetYawTilt - yawTilt) * yawTiltSpeed * step
+
+
+		local mouseOffset = mouseAimPosition
+
+		local rotationInputX = mouseOffset.X / mouseAimRadius
+		local rotationInputY = mouseOffset.Y / mouseAimRadius
+
+		local pitchInput = -rotationInputY * pitchSpeed * turnRate * step * 2
+		jetRotation = jetRotation * CFrame.Angles(pitchInput, 0, 0)
+
+		local rollInput = -rotationInputX * rollSpeed * turnRate * step * 2
+		jetRotation = jetRotation * CFrame.Angles(0, 0, rollInput)
+
+		jetRotation = jetRotation * CFrame.Angles(0, yawTilt * step, 0)
+
+		
+		local pitchLimit = math.rad(85)
+		local currentPitch = math.asin(math.clamp(jetRotation.LookVector.Y, -1, 1))
+
+		Pitch = currentPitch
+		if math.abs(currentPitch) > pitchLimit then
+			local clampedPitch = math.clamp(currentPitch, -pitchLimit, pitchLimit)
+			local pitchDiff = clampedPitch - currentPitch
+			jetRotation = jetRotation * CFrame.Angles(pitchDiff, 0, 0)
+
+			Pitch = pitchDiff
+		end
+
+		updateGunGimbal(step)
+		
+		updateMissileLock(step)
+
+		
+		local targetCFrame = CFrame.new(Handle.Position) * jetRotation
+
+		
+		local targetVelocity = jetRotation.LookVector * currentSpeed
+		local currentVelocity = Handle.AssemblyLinearVelocity or Handle.Velocity
+		local velocity = currentVelocity:Lerp(targetVelocity, 1 - driftFactor)
+
+		
+		local acceleration = (currentSpeed - previousSpeed) / step
+		local angularVelocity = calculateAngularVelocity(jetRotation, previousRotation, step)
+
+		
+		local smoothFactor = 0.15
+		accelerationSmoothed = accelerationSmoothed + (acceleration - accelerationSmoothed) * smoothFactor
+		angularVelocitySmoothed = angularVelocitySmoothed + (angularVelocity - angularVelocitySmoothed) * smoothFactor
+
+		
+		previousSpeed = currentSpeed
+		previousRotation = jetRotation
+
+
+
+		
+		local speedRatio = (currentSpeed - minSpeed) / (maxSpeed - minSpeed)
+
+		
+		local enginePitch = 0.8 + speedRatio/2
+		local engineVolume = 0.8 + speedRatio/3
+		
+		
+		
+		
+		
+		local accDiff = ((accelerationSmoothed+40)/60)-0.85
+		local accelerationPitch = 0.8 + accDiff
+		local accelerationVolume = 1 + accDiff/1.3
+		
+		print("ACC: "..accelerationVolume.." SPE: "..engineVolume)
+
+		
+		local turnIntensity = math.abs(rotationInputX) + math.abs(rotationInputY/3)
+		local afterburnerPitch = 1 + turnIntensity
+		local afterburnerVolume = 2 + turnIntensity*10
+		
+		
+		
+		
+		local upIntensity = math.abs(rotationInputY) + math.abs(rotationInputX/3)
+		local rollPitch = 0.7 + upIntensity*1.5
+		local rollVolume = 1.5 + upIntensity*20
+		
+		
+
+
+		
+		local idleActivity = (rollVolume + afterburnerVolume + accelerationVolume + engineVolume)/10
+		local idlePitch = 0.8 + idleActivity
+		local idleVolume = 0.3 + idleActivity
+
+		
+		print("ENG: "..engineVolume)
+
+
+		if timeSinceLastUpdate >= updateInterval then
+			UpdateJetMovement:FireServer(velocity, targetCFrame)
+			timeSinceLastUpdate = 0
+		end
+
+		if timeSinceLastEffectsUpdate >= effectsUpdateInterval then
+			UpdateJetEffects:FireServer(
+				speedRatio,
+				turnIntensity,
+				{
+					enginePitch = enginePitch,
+					engineVolume = engineVolume,
+					afterburnerPitch = afterburnerPitch,
+					afterburnerVolume = afterburnerVolume,
+					accelerationPitch = accelerationPitch,
+					accelerationVolume = accelerationVolume,
+					turnPitch = rollPitch,
+					turnVolume = rollVolume,
+					idlePitch = idlePitch,
+					idleVolume = idleVolume
+				}
+			)
+			timeSinceLastEffectsUpdate = 0
+		end
+
+
+		updateCrosshairPosition()
+		
+		updateMissileWarning()
+	end)
+end
+
+Evt.Xp.OnClientEvent:Connect(function(Type)
+
+	local HMC = Engine.FX.Killmarker:Clone()
+	local HMGC
+	if CurrentFireMode == "MachineGun" then
+		HMGC = aimCrosshair.HitFrame.Hit2:Clone()
+		HMGC.Parent = aimCrosshair.HitFrame
+	elseif CurrentFireMode == "Missile" then
+		HMGC = missileCrosshair.HitFrame.Hit2:Clone()
+		HMGC.Parent = missileCrosshair.HitFrame
+	end
+	local Xp
+
+
+	HMGC.Name = "ActiveKillmarker"
+
+	HMGC.Size=UDim2.new(0,60,0,60)
+	HMGC.ImageColor3 = Color3.fromRGB(200,0,0)
+	HMGC.ZIndex = 2
+	HMC.Parent = plr.PlayerGui
+	HMC.PlayOnRemove = true
+	HMC:Destroy()
+
+
+	TS:Create(HMGC,TweenInfo.new(0.25),{ImageTransparency=0}):Play()
+
+	TS:Create(HMGC,TweenInfo.new(0.25),{Size=UDim2.new(0,50,0,50)}):Play()
+
+	if Type == "Head" then
+		Xp = 175
+	else
+		Xp = 135
+	end
+
+	local Medal = aimGui.Parent.XpFrame.Medals.Temp:Clone()
+	Medal.Parent = aimGui.Parent.XpFrame.Medals
+	Medal.Visible = true
+	Medal.Text = "ELIMINATION"
+	Medal.Name = "ELIMINATION"
+
+
+	local Amount = aimGui.Parent.XpFrame.Amount.Temp:Clone()
+	Amount.Parent = aimGui.Parent.XpFrame.Amount
+	Amount.Visible = true
+	Amount.Text = " + "..Xp.." XP"
+	Amount.Name = "Amount"
+
+
+
+
+	TS:Create(Amount,TweenInfo.new(0.25),{TextTransparency=0}):Play()
+
+	task.wait(2)
+
+
+
+
+	TS:Create(HMGC,TweenInfo.new(0.5),{ImageTransparency=1}):Play()
+
+	TS:Create(Amount,TweenInfo.new(1),{TextTransparency=1}):Play()
+	TS:Create(Medal,TweenInfo.new(1),{TextTransparency=1}):Play()
+
+	TS:Create(HMGC,TweenInfo.new(0.75),{Size=UDim2.new(0,100,0,100)}):Play()
+	task.wait(0.75)
+	Amount:Destroy()
+	Medal:Destroy()
+
+	HMGC:Destroy()
+
+
+
+end)
+
+Evt.HitMarker.OnClientEvent:Connect(function(Type,Damage)
+	if Damage > 0 then
+		local HMC, HMGC
+		if CurrentFireMode == "MachineGun" then
+			HMGC = aimCrosshair.HitFrame.Hit1:Clone()
+			HMGC.Parent = aimCrosshair.HitFrame
+		elseif CurrentFireMode == "Missile" then
+			HMGC = missileCrosshair.HitFrame.Hit1:Clone()
+			HMGC.Parent = missileCrosshair.HitFrame
+		end
+		HMGC.Name = "ActiveHitmarker"
+		HMGC.Size=UDim2.new(0,50,0,50)
+		if Type == "Head" then
+			HMC = Engine.FX.Headmarker:Clone()
+		else
+			HMC = Engine.FX.Hitmarker:Clone()
+		end
+		HMC.Parent = plr.PlayerGui
+		HMC.PlayOnRemove = true
+		HMC:Destroy()
+
+		TS:Create(HMGC,TweenInfo.new(0.1),{ImageTransparency=0.5}):Play()
+		TS:Create(HMGC,TweenInfo.new(0.1),{Size=UDim2.new(0,40,0,40)}):Play()
+
+		task.wait(1)
+		TS:Create(HMGC,TweenInfo.new(0.25),{ImageTransparency=1}):Play()
+		if HMC:FindFirstChild("ActiveHitmarker") then
+			if HMC:FindFirstChild("ActiveHitmarker") == HMGC then
+				TS:Create(HMGC,TweenInfo.new(0.5),{Size=UDim2.new(0,100,0,100)}):Play()
+			end
+		end
+		task.wait(0.5)
+		HMGC:Destroy()
+	end
+end)
+
+User.InputChanged:Connect(function(input, gameProcessed)
+	if not jetExists then return end
+
+	if input.UserInputType == Enum.UserInputType.MouseMovement then
+		
+		if centerScreenPosition then
+			local mousePos = User:GetMouseLocation()
+			local offset = mousePos - centerScreenPosition
+
+			
+			local distance = offset.Magnitude
+			if distance > mouseAimRadius then
+				offset = offset.Unit * mouseAimRadius
+			end
+
+			
+			mouseAimPosition = offset
+			isUsingController = false
+		end
+	end
+end)
+
+User.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if not jetExists then return end
+
+	
+	if input.UserInputType == Enum.UserInputType.Gamepad1 then
+		isUsingController = true
+
+		
+		if input.KeyCode == Enum.KeyCode.ButtonR2 then
+			controllerButtons.Shoot = true
+			local aimOffset = getMouseAimOffset()
+			if not reloading then
+				if CurrentFireMode == "MachineGun" then
+					Shoot(GunData, aimOffset)
+				elseif CurrentFireMode == "Missile" then
+					Shoot(MissileData, aimOffset)
+				end
+			end
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.ButtonL2 then
+			controllerButtons.ToggleCockpit = true
+			isInCockpit = true
+		end
+		
+		if input.KeyCode == Enum.KeyCode.ButtonL1 then
+			controllerButtons.DeployFlares = true
+			if not flareCooldown and FlareAmmo > 0 then
+				fireFlares()
+			end
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.ButtonR1 then
+			controllerButtons.FireMode = true
+			if CurrentFireMode == "MachineGun" then
+				CurrentFireMode = "Missile"
+			else
+				CurrentFireMode = "MachineGun"
+			end
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.ButtonX then
+			controllerButtons.Reload = true
+			if not shooting and not reloading then
+				Reload()
+			end
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.ButtonB then
+			controllerButtons.DropBombs = true
+			if not droppingBombs and not bombCooldown and BombAmmo > 0 then
+				DropBombs()
+			end
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.ButtonY then
+			controllerButtons.BombCam = true
+			EnterBombCam()
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.DPadUp then
+			controllerButtons.RearCam = true
+			EnterRearCam()
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.DPadDown then
+			controllerButtons.DestroyJet = true
+			destroyJet()
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.ButtonX then
+			
+		end
+	end
+
+	
+	if input.KeyCode == Enum.KeyCode.V then
+		EnterBombCam()
+	end
+
+	
+	if input.KeyCode == Enum.KeyCode.Z then
+		EnterRearCam()
+	end
+
+	
+	if input.KeyCode == Enum.KeyCode.X then
+		destroyJet()
+	end
+end)
+
+
+User.InputEnded:Connect(function(input, gameProcessed)
+	if not jetExists then return end
+
+	
+	if input.UserInputType == Enum.UserInputType.Gamepad1 then
+		
+		if input.KeyCode == Enum.KeyCode.ButtonR2 then
+			controllerButtons.Shoot = false
+			mouse1down = false
+			canShoot = true
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.ButtonL2 then
+			controllerButtons.ToggleCockpit = false
+			isInCockpit = false
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.ButtonR1 then
+			controllerButtons.FireMode = false
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.ButtonX then
+			controllerButtons.Reload = false
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.ButtonB then
+			controllerButtons.DropBombs = false
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.ButtonY then
+			controllerButtons.BombCam = false
+			if CameraMode == "BombCam" then
+				ExitSpecialCam()
+			end
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.DPadUp then
+			controllerButtons.RearCam = false
+			if CameraMode == "RearCam" then
+				ExitSpecialCam()
+			end
+		end
+
+		
+		if input.KeyCode == Enum.KeyCode.DPadDown then
+			controllerButtons.DestroyJet = false
+		end
+	end
+
+
+	if input.KeyCode == Enum.KeyCode.V and CameraMode == "BombCam" then
+		ExitSpecialCam()
+	end
+
+	
+	if input.KeyCode == Enum.KeyCode.Z and CameraMode == "RearCam" then
+		ExitSpecialCam()
+	end
+end)
+
+
+function destroyJet()
+	if not jetExists then return end
+	
+	ExitSpecialCam()
+	DestroyJet:FireServer("Explosion")
+	char.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+	if renderSteppedConnection then
+		renderSteppedConnection:Disconnect()
+		renderSteppedConnection = nil
+	end
+
+	
+	CAS:UnbindAction("Forward")
+	CAS:UnbindAction("Backward")
+	CAS:UnbindAction("Left")
+	CAS:UnbindAction("Right")
+	CAS:UnbindAction("Shoot")
+	CAS:UnbindAction("ToggleCockpit")
+	CAS:UnbindAction("FireMode")
+	CAS:UnbindAction("Reload")
+	CAS:UnbindAction("DropBombs")
+	
+	CAS:UnbindAction("DeployFlares")
+	
+	
+	
+	isBeingLockedOn = false
+	incomingMissiles = {}
+	FlaresMuzzle = nil
+	lockingSound = nil
+	lockedSound = nil
+	previousLockingTarget = nil
+	
+	
+	cam.CameraType = Enum.CameraType.Custom
+	cam.CameraSubject = Humanoid
+	cam.FieldOfView = originalFieldOfView
+	User.MouseBehavior = Enum.MouseBehavior.Default
+	User.MouseIconEnabled = true
+
+	
+	destroyAimUI()
+
+	jetExists = false
+	jet = nil
+	MGMuzzle = nil
+	MissileMuzzle = nil
+	isInCockpit = false
+	jetSettings = nil
+
+	
+	jetRotation = CFrame.new()
+	previousRotation = CFrame.new()
+	mouseDeltaX = 0
+	mouseDeltaY = 0
+	mouseAimPosition = Vector2.new(0, 0)
+	centerScreenPosition = nil
+	previousSpeed = baseSpeed
+	angularVelocitySmoothed = 0
+	accelerationSmoothed = 0
+	currentGunPitch = 0
+	currentGunYaw = 0
+
+	
+	LockTarget = nil
+	LockingTarget = nil
+	LockProgress = 0
+	lastBeepTime = 0
+	hasPlayedLockSound = false
+
+	
+	CameraMode = "Normal"
+	FrozenJetRotation = nil
+	FrozenJetVelocity = nil
+
+	
+	isUsingController = false
+	leftThumbstick = Vector2.new(0, 0)
+	rightThumbstick = Vector2.new(0, 0)
+	for key, _ in pairs(controllerButtons) do
+		controllerButtons[key] = false
+	end
+end
+
+
+char.Humanoid.Died:Connect(function()
+	if jetExists then
+		destroyJet()
+	end
+end)
+
+
+if jet then
+	jet.AncestryChanged:Connect(function()
+		if jet and not jet.Parent and jetExists then
+			destroyJet()
+		end
+	end)
+end
+
+
+MissileLocking.OnClientEvent:Connect(function(isLocking, shooter)
+	isBeingLockedOn = isLocking
+
+	if not isLocking then
+		
+		lastLockingSoundTime = 0
+	end
+end)
+
+
+MissileFiredRemote.OnClientEvent:Connect(function(missileId, shooter)
+	incomingMissiles[missileId] = {
+		shooter = shooter,
+		time = tick()
+	}
+
+	
+	task.delay(10, function()
+		incomingMissiles[missileId] = nil
+	end)
+end)
+
+
+FlareDeployedRemote.OnClientEvent:Connect(function(flaringPlayer, flaringJet, muzzlePos, direction, flareCount, destroyedMissiles)
+	if flaringPlayer == plr then return end
+
+	
+	for i = 1, flareCount do
+		task.spawn(function()
+			createFlareVisual(muzzlePos, direction, flaringJet)
+		end)
+		task.wait(0.05)
+	end
+end)
+
+
+function createFlareVisual(origin, baseDirection, sourceJet)
+	if not sourceJet or not sourceJet:FindFirstChild("Handle") then return end
+	local jetHandle = sourceJet.Handle
+
+	local Flare = Instance.new("Part", Game_Workspace.Server)
+	Flare.Name = "Flare_Visual"
+	Flare.CanCollide = false
+	Flare.Color = Color3.fromRGB(255, 200, 100)
+	Flare.Shape = Enum.PartType.Ball
+	Flare.Transparency = 0.5
+	Flare.Size = Vector3.new(0.5, 0.5, 0.5)
+	Flare.Material = Enum.Material.Neon
+
+	local randomAngleX = math.rad(math.random(-60, 60))
+	local randomAngleY = math.rad(math.random(-60, 60))
+
+	local spreadCFrame = CFrame.Angles(randomAngleX, randomAngleY, 0)
+	local backwardDirection = -jetHandle.CFrame.LookVector
+	local downDirection = -jetHandle.CFrame.UpVector
+	local combinedDirection = (backwardDirection + downDirection * 0.5).Unit
+	combinedDirection = (CFrame.new(Vector3.new(), combinedDirection) * spreadCFrame).LookVector
+
+	Flare.CFrame = CFrame.new(origin.WorldPosition, origin.WorldPosition + combinedDirection)
+
+	
+	local At1 = Instance.new("Attachment", Flare)
+	At1.Position = Vector3.new(0, 0, 0)
+	local At2 = Instance.new("Attachment", Flare)
+	At2.Position = Vector3.new(0, 0, 0.3)
+
+	local Trail = Instance.new("Trail", Flare)
+	Trail.Transparency = NumberSequence.new(0.2, 1)
+	Trail.Color = ColorSequence.new(Color3.fromRGB(255, 200, 100))
+	Trail.Lifetime = 1.5
+	Trail.LightEmission = 1
+	Trail.Attachment0 = At1
+	Trail.Attachment1 = At2
+
+	local BF = Instance.new("BodyForce", Flare)
+	BF.Force = Vector3.new(0, Flare:GetMass() * workspace.Gravity * 0.3, 0)
+
+	Flare:ApplyImpulse(combinedDirection * 80 * Flare:GetMass())
+
+	Debris:AddItem(Flare, 4)
+end
+
+spawnJet()
