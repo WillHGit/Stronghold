@@ -1,0 +1,1914 @@
+local plr 			= game.Players.LocalPlayer
+local char 			= plr.Character or plr.CharacterAdded:Wait()
+local mouse 		= plr:GetMouse()
+local cam 			= workspace.CurrentCamera
+
+local User 			= game:GetService("UserInputService")
+local CAS 			= game:GetService("ContextActionService")
+local Run 			= game:GetService("RunService")
+local TS 			= game:GetService('TweenService')
+local Debris 		= game:GetService("Debris")
+local PhysicsService= game:GetService("PhysicsService")
+
+local RS 			= game.ReplicatedStorage
+local Game_Workspace = workspace:WaitForChild("Game_WorkSpace")
+local Engine 		= RS:WaitForChild("Engine")
+local Evt 			= Engine:WaitForChild("Events")
+local Mods 			= Engine:WaitForChild("Modules")
+local HUDs 			= Engine:WaitForChild("HUD")
+local ArmModel 		= Engine:WaitForChild("ArmModel")
+local GunModels 	= Engine:WaitForChild("GunModels")
+local AttModels 	= Engine:WaitForChild("AttModels")
+local AttModules  	= Engine:WaitForChild("AttModules")
+local Rules			= Engine:WaitForChild("GameRules")
+local PastaFx		= Engine:WaitForChild("FX")
+
+local gameRules		= require(Rules:WaitForChild("Config"))
+local SpringMod 	= require(Mods:WaitForChild("Spring"))
+local HitMod 		= require(Mods:WaitForChild("Hitmarker"))
+local Ultil			= require(Mods:WaitForChild("Utilities"))
+
+local WhizzSound = {"4872110675"; "5303773495"; "5303772965"; "5303773495"; "5303772257"; "342190005"; "342190012"; "342190017"; "342190024";}
+local Ignore_Model = {cam, plr.Character, Game_Workspace.Client, Game_Workspace.Server}
+
+local NVG = false
+
+-- Audio constants for realistic sound propagation
+local SPEED_OF_SOUND = 343 -- meters per second at sea level
+local REALISTIC_AUDIO_THRESHOLD = 150 -- distance in studs below which audio is default
+local DISTANCE_MULTIPLIER = 0.28 -- convert studs to meters (1 stud ≈ 0.28 meters)
+
+local JetRemotes = RS:WaitForChild("JetRemotes")
+local FlareDeployedRemote = JetRemotes:WaitForChild("FlareDeployed")
+
+----------//Audio Processing Functions\\----------
+
+-- Function to calculate audio travel delay based on distance
+local function CalculateAudioDelay(distance)
+	if distance < REALISTIC_AUDIO_THRESHOLD then
+		return 0 -- No delay under threshold
+	end
+
+	local distanceInMeters = distance * DISTANCE_MULTIPLIER
+	local delay = distanceInMeters / SPEED_OF_SOUND
+	return delay
+end
+
+-- Function to apply frequency-dependent attenuation to echo sounds
+local function ApplyFrequencyAttenuation(sound, distance)
+	if distance < REALISTIC_AUDIO_THRESHOLD then
+		return -- No modification under threshold
+	end
+
+	-- Ensure the sound has an EqualizerSoundEffect
+	local equalizer = sound:FindFirstChildOfClass("EqualizerSoundEffect")
+	if not equalizer then
+		equalizer = Instance.new("EqualizerSoundEffect", sound)
+	end
+
+	-- Calculate attenuation based on distance
+	-- Higher frequencies (HighGain) attenuate more over distance
+	-- Lower frequencies (LowGain) travel further
+	local distanceFactor = math.clamp((distance - REALISTIC_AUDIO_THRESHOLD) / 500, 0, 1)
+
+	-- Attenuate high frequencies more aggressively with distance
+	equalizer.HighGain = math.max(-80, -10 - (distanceFactor * 50))
+
+	-- Mid frequencies attenuate moderately
+	equalizer.MidGain = math.max(-80, -5 - (distanceFactor * 30))
+
+	-- Low frequencies remain relatively unaffected
+	equalizer.LowGain = math.max(-20, 0 - (distanceFactor * 15))
+end
+
+-- Function to play sound with realistic delay and frequency response
+local function PlaySoundWithRealism(sound, distance, isSuppressed)
+	if not sound then return end
+
+	local delay = CalculateAudioDelay(distance)
+
+	if delay > 0 then
+		-- Apply frequency attenuation for echo sounds
+		if sound.Name:find("Echo") then
+			ApplyFrequencyAttenuation(sound, distance)
+		end
+
+		-- Schedule sound playback after travel delay
+		task.delay(delay, function()
+			if sound and sound.Parent then
+				sound:Play()
+			end
+		end)
+	else
+		-- Play immediately for close range
+		sound:Play()
+	end
+end
+
+----------//Local Events\\----------
+Evt.NVG.Event:Connect(function(Value)
+	NVG = Value
+end)
+
+-------------//Events\\-------------
+Evt.HitEffect.OnClientEvent:Connect(function(Player,Position, HitPart, Normal, Material,Settings,ArchetypeData)
+	if Player ~= plr then 
+		HitMod.HitEffect(Ignore_Model,Position, HitPart, Normal, Material,Settings,ArchetypeData)
+	end
+end)
+
+Evt.LocalExplosion.OnClientEvent:Connect(function(Explosion)
+	local Distance = 0
+	if Explosion:IsA("Attachment") then 
+		Distance = (Explosion.WorldPosition - plr.Character.Head.Position).Magnitude
+	elseif Explosion:IsA("BasePart") then 
+		Distance = (Explosion.Position - plr.Character.Head.Position).Magnitude
+	end
+	for i,v in pairs(Explosion:GetChildren()) do
+		if v:IsA("Sound") and (v.Name == "Explode" or v.Name == "Explosion" or v.Name == "Echo")then
+			PlaySoundWithRealism(v, Distance/1.5, false)
+			v.Ended:Connect(function()
+				v:Destroy()
+			end)
+		end
+	end
+end)
+
+Evt.Atirar.OnClientEvent:Connect(function(Player,Arma,Suppressor,FlashHider,Pos,Jet)
+	if not Jet then
+		if Player ~= plr and Arma then 
+			if Player.Character:FindFirstChild("S"..Arma.Name) and Player.Character:FindFirstChild('S'..Arma.Name):FindFirstChild("Handle") and Player.Character:FindFirstChild('S'..Arma.Name).Handle:FindFirstChild("Muzzle") then
+				local Muzzle = Player.Character:FindFirstChild("S"..Arma.Name).Handle.Muzzle
+				local Distance = (Pos - plr.Character.Head.Position).Magnitude
+				local WeaponData = require(Arma:WaitForChild("Settings"))
+
+				-- Echo sound with realistic propagation
+				if Muzzle:FindFirstChild("Echo") then
+					local newSound = Muzzle.Echo:Clone()
+					newSound.Parent = Muzzle
+					newSound.Name = "FireEcho"
+					if Suppressor then
+						if Muzzle:FindFirstChild("Suppressed") then
+							newSound.SoundId = Muzzle.Suppressed.SoundId
+						end
+						newSound.PlaybackSpeed = newSound.PlaybackSpeed*1.5
+						newSound.EqualizerSoundEffect.HighGain = 10
+						newSound.EqualizerSoundEffect.LowGain = -10
+						newSound.EqualizerSoundEffect.MidGain = -5
+					end
+					if newSound.Volume > 1 then
+						newSound.Volume = 1
+					end
+
+					-- Use realistic audio delay and frequency attenuation
+					PlaySoundWithRealism(newSound, Distance, Suppressor)
+					newSound.Ended:Connect(function()
+						newSound:Destroy()
+					end)
+				end
+
+				-- Bass sound with realistic propagation
+				if Muzzle:FindFirstChild("Bass") then
+					local newSound = Muzzle.Bass:Clone()
+					newSound.Parent = Muzzle
+					newSound.Name = "FireBass"
+					if Suppressor then
+						newSound.Volume = newSound.Volume/2
+						newSound.PlaybackSpeed = newSound.PlaybackSpeed*1.5
+					end
+					if newSound.Volume > 1 then
+						newSound.Volume = 1
+					end
+
+					-- Bass sounds already travel well, but apply delay
+					local delay = CalculateAudioDelay(Distance)
+					if delay > 0 then
+						task.delay(delay, function()
+							if newSound and newSound.Parent then
+								newSound:Play()
+							end
+						end)
+					else
+						newSound:Play()
+					end
+
+					newSound.Ended:Connect(function()
+						newSound:Destroy()
+					end)
+				end
+
+				-- ADS sounds with realistic propagation
+				if Muzzle:FindFirstChild("ADSDisconnect") then
+					local newSound = Muzzle.ADSDisconnect:Clone()
+					newSound.Parent = Muzzle
+					newSound.Name = "FireADSDisconnect"
+					if Suppressor then
+						newSound.Volume = newSound.Volume/2
+						newSound.PlaybackSpeed = newSound.PlaybackSpeed*1.5
+					end
+					if newSound.Volume > 1 then
+						newSound.Volume = 1
+					end
+
+					local delay = CalculateAudioDelay(Distance)
+					if delay > 0 then
+						task.delay(delay, function()
+							if newSound and newSound.Parent then
+								newSound:Play()
+							end
+						end)
+					else
+						newSound:Play()
+					end
+
+					newSound.Ended:Connect(function()
+						newSound:Destroy()
+					end)
+				end
+
+				if Muzzle:FindFirstChild("ADSMech") then
+					local newSound = Muzzle.ADSMech:Clone()
+					newSound.Parent = Muzzle
+					newSound.Name = "FireADSMech"
+					if Suppressor then
+						newSound.Volume = newSound.Volume/2
+						newSound.PlaybackSpeed = newSound.PlaybackSpeed*1.5
+					end
+					if newSound.Volume > 1 then
+						newSound.Volume = 1
+					end
+
+					local delay = CalculateAudioDelay(Distance)
+					if delay > 0 then
+						task.delay(delay, function()
+							if newSound and newSound.Parent then
+								newSound:Play()
+							end
+						end)
+					else
+						newSound:Play()
+					end
+
+					newSound.Ended:Connect(function()
+						newSound:Destroy()
+					end)
+				end
+
+				-- Main gunshot sound with realistic propagation
+				if Suppressor then
+					local newSound = Muzzle.Fire1:Clone()
+					newSound.Parent = Muzzle
+					if newSound.Volume > 1 then
+						newSound.Volume = 1
+					end
+					local EqualizerSoundEffect= Instance.new("EqualizerSoundEffect",newSound)
+					EqualizerSoundEffect.HighGain = 5
+					EqualizerSoundEffect.LowGain = -5
+					EqualizerSoundEffect.MidGain = -2
+					newSound.Name = "Firing"
+
+					local delay = CalculateAudioDelay(Distance)
+					if delay > 0 then
+						task.delay(delay, function()
+							if newSound and newSound.Parent then
+								newSound:Play()
+							end
+						end)
+					else
+						newSound:Play()
+					end
+
+					newSound.Ended:Connect(function()
+						newSound:Destroy()
+					end)
+				else
+					local newSound
+					newSound = Muzzle.Fire1:Clone()
+
+					newSound.Parent = Muzzle
+					newSound.Name = "Firing"
+					if newSound.Volume > 1 then
+						newSound.Volume = 1
+					end
+
+					local delay = CalculateAudioDelay(Distance)
+					if delay > 0 then
+						task.delay(delay, function()
+							if newSound and newSound.Parent then
+								newSound:Play()
+							end
+						end)
+					else
+						newSound:Play()
+					end
+
+					newSound.Ended:Connect(function()
+						newSound:Destroy()
+					end)
+				end
+
+				if Muzzle:FindFirstChild("FlashFX") then
+					Muzzle["FlashFX"].Enabled = true
+					task.delay(0.04,function()
+						if Muzzle:FindFirstChild("FlashFX") then
+							Muzzle["FlashFX"].Enabled = false
+						end
+					end)
+				end
+
+				if Muzzle:FindFirstChild("FlashFX[Flash]") then
+					Muzzle["FlashFX[Flash]"]:Emit(math.random(5,10))
+				end
+				if Muzzle:FindFirstChild("Smoke") then
+					Muzzle["Smoke"]:Emit(math.random(20,30))
+				end
+
+				if Muzzle:FindFirstChild("FlashFX[Right]") then
+					Muzzle["FlashFX[Right]"]:Emit(math.random(5,10))
+				end
+				if Muzzle:FindFirstChild("FlashFX[Left]") then
+					Muzzle["FlashFX[Left]"]:Emit(math.random(5,10))
+				end
+
+				if Muzzle:FindFirstChild("Smoke2") then
+					Muzzle["Smoke2"]:Emit(math.random(20,30))
+				end
+				if Muzzle:FindFirstChild("Smoke3") then
+					Muzzle["Smoke3"]:Emit(math.random(20,30))
+				end
+			end
+
+
+			if Player.Character:FindFirstChild("AnimBase") ~= nil and Player.Character.AnimBase:FindFirstChild("AnimBaseW") then
+				local AnimBase = Player.Character:WaitForChild("AnimBase"):WaitForChild("AnimBaseW")
+				TS:Create(AnimBase, TweenInfo.new(0.05,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut,0,false,0), {C1 =  CFrame.new(0,0,0.15):Inverse()} ):Play()
+				delay(.1,function()
+					TS:Create(AnimBase, TweenInfo.new(.05,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut,0,false,0), {C1 =  CFrame.new():Inverse()} ):Play()
+				end)
+			end
+		end
+	else
+		if Player ~= plr then 
+			local Muzzle = Arma
+			local Distance = (Pos - plr.Character.Head.Position).Magnitude
+
+			-- Main fire sound with realistic propagation
+			local newSound
+			newSound = Muzzle["Fire"..math.random(1,3)]:Clone()
+			newSound.Parent = Muzzle
+			newSound.Name = "Firing"
+			if newSound.Volume > 1 then
+				newSound.Volume = 1
+			end
+
+			local delay = CalculateAudioDelay(Distance)
+			if delay > 0 then
+				task.delay(delay, function()
+					if newSound and newSound.Parent then
+						newSound:Play()
+					end
+				end)
+			else
+				newSound:Play()
+			end
+
+			newSound.Ended:Connect(function()
+				newSound:Destroy()
+			end)
+
+			-- Echo sound with realistic propagation
+			if Muzzle:FindFirstChild("Echo") then
+				local newSound = Muzzle.Echo:Clone()
+				newSound.Parent = Muzzle
+				newSound.Name = "FireEcho"
+				if Suppressor then
+					if Muzzle:FindFirstChild("Suppressed") then
+						newSound.SoundId = Muzzle.Suppressed.SoundId
+					end
+					newSound.PlaybackSpeed = newSound.PlaybackSpeed*1.5
+					newSound.EqualizerSoundEffect.HighGain = 10
+					newSound.EqualizerSoundEffect.LowGain = -10
+					newSound.EqualizerSoundEffect.MidGain = -5
+				end
+				if newSound.Volume > 1 then
+					newSound.Volume = 1
+				end
+
+				-- Use realistic audio delay and frequency attenuation
+				PlaySoundWithRealism(newSound, Distance, Suppressor)
+				newSound.Ended:Connect(function()
+					newSound:Destroy()
+				end)
+			end
+
+			if Muzzle:FindFirstChild("FlashFX") then
+				Muzzle["FlashFX"].Enabled = true
+				task.delay(0.04,function()
+					if Muzzle:FindFirstChild("FlashFX") then
+						Muzzle["FlashFX"].Enabled = false
+					end
+				end)
+			end
+
+			if Muzzle:FindFirstChild("FlashFX[Flash]") then
+				Muzzle["FlashFX[Flash]"]:Emit(math.random(5,10))
+			end
+			if Muzzle:FindFirstChild("Smoke") then
+				Muzzle["Smoke"]:Emit(math.random(20,30))
+			end
+
+			if Muzzle:FindFirstChild("FlashFX[Right]") then
+				Muzzle["FlashFX[Right]"]:Emit(math.random(5,10))
+			end
+			if Muzzle:FindFirstChild("FlashFX[Left]") then
+				Muzzle["FlashFX[Left]"]:Emit(math.random(5,10))
+			end
+
+			if Muzzle:FindFirstChild("Smoke2") then
+				Muzzle["Smoke2"]:Emit(math.random(20,30))
+			end
+			if Muzzle:FindFirstChild("Smoke3") then
+				Muzzle["Smoke3"]:Emit(math.random(20,30))
+			end
+		end
+	end
+
+end)
+
+Evt.AIHitscanBullet.OnClientEvent:Connect(function(Character, Origin, HitPosition, WeaponData, ArchetypeData, Distance)
+	if not Character or Character == plr.Character then
+		return -- Don't show our own bullets
+	end
+
+	-- Create a fast-moving visual bullet
+	local Bullet = Instance.new("Part", Game_Workspace.Server)
+	Bullet.Name = Character.Name .. "_VisualBullet"
+	Bullet.CanCollide = false
+	Bullet.Shape = Enum.PartType.Ball
+	Bullet.Transparency = 1
+	Bullet.Size = Vector3.new(0.5, 0.5, 0.5)
+	Bullet.Color = ArchetypeData.TracerColor
+	Bullet.Anchored = true -- Keep it anchored, we'll move it manually
+
+	-- Calculate travel time based on distance (make it fast but visible)
+	local travelSpeed = 1000 -- studs per second (very fast)
+	local travelTime = Distance / travelSpeed
+	travelTime = math.max(0.01, math.min(travelTime, 0.1)) -- Clamp between 0.01 and 0.1 seconds
+
+	-- Create tracer effect
+	if ArchetypeData.Tracer == true then
+		local At1 = Instance.new("Attachment")
+		At1.Name = "At1"
+		At1.Position = Vector3.new(-0.1, 0, 0)
+		At1.Parent = Bullet
+
+		local At2 = Instance.new("Attachment")
+		At2.Name = "At2"
+		At2.Position = Vector3.new(0.2, 0, 0)
+		At2.Parent = Bullet
+
+		local Particles = Instance.new("Trail")
+		Particles.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, ArchetypeData.BulletTransparency, 0),
+			NumberSequenceKeypoint.new(0.5, ArchetypeData.BulletTransparency, 0),
+			NumberSequenceKeypoint.new(1, 1)
+		})
+
+		Particles.WidthScale = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, ArchetypeData.BulletSize, 0),
+			NumberSequenceKeypoint.new(0.5, ArchetypeData.BulletSize, 0),
+			NumberSequenceKeypoint.new(1, ArchetypeData.BulletSize / 10)
+		})
+
+		Particles.Color = ColorSequence.new(ArchetypeData.TracerColor)
+		Particles.Texture = "rbxassetid://14846394635"
+		Particles.TextureMode = Enum.TextureMode.Stretch
+
+		if ArchetypeData.GlowingBullet == true then
+			Particles.Brightness = 10
+			Particles.LightInfluence = 0
+			Particles.LightEmission = 1
+		end
+
+		Particles.FaceCamera = true
+		Particles.LightEmission = 1
+		Particles.LightInfluence = 0
+		Particles.Lifetime = travelTime
+		Particles.Attachment0 = At1
+		Particles.Attachment1 = At2
+		Particles.Parent = Bullet
+	end
+
+	-- Add bullet flare
+	if ArchetypeData.BulletFlare == true then
+		local bg = Instance.new("BillboardGui", Bullet)
+		bg.Adornee = Bullet
+		bg.Enabled = true
+		local flashsize = math.random(75, 100) / 10
+		bg.Size = UDim2.new(flashsize, 0, flashsize, 0)
+		bg.LightInfluence = 0
+		bg.Brightness = 20
+
+		local flash = Instance.new("ImageLabel", bg)
+		flash.BackgroundTransparency = 1
+		flash.Size = UDim2.new(1, 0, 1, 0)
+		flash.Position = UDim2.new(0, 0, 0, 0)
+		flash.Image = "http://www.roblox.com/asset/?id=1047066405"
+		flash.ImageTransparency = math.random(2, 5) / 15
+		flash.ImageColor3 = ArchetypeData.TracerColor
+	end
+
+	-- Position bullet at origin
+	Bullet.CFrame = CFrame.new(Origin, HitPosition)
+
+	-- Animate bullet moving to hit position
+	local startTime = tick()
+	local connection
+	connection = Run.Heartbeat:Connect(function()
+		local elapsed = tick() - startTime
+		local progress = math.min(elapsed / travelTime, 1)
+
+		if progress >= 1 or not Bullet or not Bullet.Parent then
+			if connection then
+				connection:Disconnect()
+			end
+			if Bullet and Bullet.Parent then
+				Bullet:Destroy()
+			end
+			return
+		end
+
+		-- Lerp position
+		local currentPos = Origin:Lerp(HitPosition, progress)
+		Bullet.CFrame = CFrame.new(currentPos, HitPosition)
+	end)
+
+	-- Clean up after travel time
+	Debris:AddItem(Bullet, travelTime + 0.2)
+end)
+
+
+Evt.AIGunfx.OnClientEvent:Connect(function(Character,Arma,Suppressor,FlashHider,Pos)
+
+	if Character and Arma then 
+		if Character:FindFirstChild("S"..Arma.Name) and Character:FindFirstChild('S'..Arma.Name):FindFirstChild("Handle") and Character:FindFirstChild('S'..Arma.Name).Handle:FindFirstChild("Muzzle") then
+			local Muzzle = Character:FindFirstChild("S"..Arma.Name).Handle.Muzzle
+			local Distance = (Pos - plr.Character.Head.Position).Magnitude
+			local WeaponData = require(Arma:WaitForChild("Settings"))
+
+			-- Echo sound with realistic propagation
+			if Muzzle:FindFirstChild("Echo") then
+				local newSound = Muzzle.Echo:Clone()
+				newSound.Parent = Muzzle
+				newSound.Name = "FireEcho"
+				if Suppressor then
+					if Muzzle:FindFirstChild("Suppressed") then
+						newSound.SoundId = Muzzle.Suppressed.SoundId
+					end
+					newSound.PlaybackSpeed = newSound.PlaybackSpeed*1.5
+					newSound.EqualizerSoundEffect.HighGain = 10
+					newSound.EqualizerSoundEffect.LowGain = -10
+					newSound.EqualizerSoundEffect.MidGain = -5
+				end
+				if newSound.Volume > 1 then
+					newSound.Volume = 1
+				end
+
+				-- Use realistic audio delay and frequency attenuation
+				PlaySoundWithRealism(newSound, Distance, Suppressor)
+				newSound.Ended:Connect(function()
+					newSound:Destroy()
+				end)
+			end
+
+			-- Bass sound with realistic propagation
+			if Muzzle:FindFirstChild("Bass") then
+				local newSound = Muzzle.Bass:Clone()
+				newSound.Parent = Muzzle
+				newSound.Name = "FireBass"
+				if Suppressor then
+					newSound.Volume = newSound.Volume/2
+					newSound.PlaybackSpeed = newSound.PlaybackSpeed*1.5
+				end
+				if newSound.Volume > 1 then
+					newSound.Volume = 1
+				end
+
+				-- Bass sounds already travel well, but apply delay
+				local delay = CalculateAudioDelay(Distance)
+				if delay > 0 then
+					task.delay(delay, function()
+						if newSound and newSound.Parent then
+							newSound:Play()
+						end
+					end)
+				else
+					newSound:Play()
+				end
+
+				newSound.Ended:Connect(function()
+					newSound:Destroy()
+				end)
+			end
+
+			-- ADS sounds with realistic propagation
+			if Muzzle:FindFirstChild("ADSDisconnect") then
+				local newSound = Muzzle.ADSDisconnect:Clone()
+				newSound.Parent = Muzzle
+				newSound.Name = "FireADSDisconnect"
+				if Suppressor then
+					newSound.Volume = newSound.Volume/2
+					newSound.PlaybackSpeed = newSound.PlaybackSpeed*1.5
+				end
+				if newSound.Volume > 1 then
+					newSound.Volume = 1
+				end
+
+				local delay = CalculateAudioDelay(Distance)
+				if delay > 0 then
+					task.delay(delay, function()
+						if newSound and newSound.Parent then
+							newSound:Play()
+						end
+					end)
+				else
+					newSound:Play()
+				end
+
+				newSound.Ended:Connect(function()
+					newSound:Destroy()
+				end)
+			end
+
+			if Muzzle:FindFirstChild("ADSMech") then
+				local newSound = Muzzle.ADSMech:Clone()
+				newSound.Parent = Muzzle
+				newSound.Name = "FireADSMech"
+				if Suppressor then
+					newSound.Volume = newSound.Volume/2
+					newSound.PlaybackSpeed = newSound.PlaybackSpeed*1.5
+				end
+				if newSound.Volume > 1 then
+					newSound.Volume = 1
+				end
+
+				local delay = CalculateAudioDelay(Distance)
+				if delay > 0 then
+					task.delay(delay, function()
+						if newSound and newSound.Parent then
+							newSound:Play()
+						end
+					end)
+				else
+					newSound:Play()
+				end
+
+				newSound.Ended:Connect(function()
+					newSound:Destroy()
+				end)
+			end
+
+			-- Main gunshot sound with realistic propagation
+			if Suppressor then
+				local newSound = Muzzle.Fire1:Clone()
+				newSound.Parent = Muzzle
+				if newSound.Volume > 1 then
+					newSound.Volume = 1
+				end
+				local EqualizerSoundEffect= Instance.new("EqualizerSoundEffect",newSound)
+				EqualizerSoundEffect.HighGain = 5
+				EqualizerSoundEffect.LowGain = -5
+				EqualizerSoundEffect.MidGain = -2
+				newSound.Name = "Firing"
+
+				local delay = CalculateAudioDelay(Distance)
+				if delay > 0 then
+					task.delay(delay, function()
+						if newSound and newSound.Parent then
+							newSound:Play()
+						end
+					end)
+				else
+					newSound:Play()
+				end
+
+				newSound.Ended:Connect(function()
+					newSound:Destroy()
+				end)
+			else
+				local newSound
+				newSound = Muzzle.Fire1:Clone()
+
+				newSound.Parent = Muzzle
+				newSound.Name = "Firing"
+				if newSound.Volume > 1 then
+					newSound.Volume = 1
+				end
+
+				local delay = CalculateAudioDelay(Distance)
+				if delay > 0 then
+					task.delay(delay, function()
+						if newSound and newSound.Parent then
+							newSound:Play()
+						end
+					end)
+				else
+					newSound:Play()
+				end
+
+				newSound.Ended:Connect(function()
+					newSound:Destroy()
+				end)
+			end
+		end
+
+
+		if Character:FindFirstChild("AnimBase") ~= nil and Character.AnimBase:FindFirstChild("AnimBaseW") then
+			local AnimBase = Character:WaitForChild("AnimBase"):WaitForChild("AnimBaseW")
+			TS:Create(AnimBase, TweenInfo.new(0.05,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut,0,false,0), {C1 =  CFrame.new(0,0,0.15):Inverse()} ):Play()
+			delay(.1,function()
+				TS:Create(AnimBase, TweenInfo.new(.05,Enum.EasingStyle.Sine,Enum.EasingDirection.InOut,0,false,0), {C1 =  CFrame.new():Inverse()} ):Play()
+			end)
+		end
+	end
+end)
+
+Evt.SVLaser.OnClientEvent:Connect(function(Player,Position,Modo,Cor,IR,Arma)
+
+	if Player ~= plr and Player.Character and Arma then
+
+		if Game_Workspace.Server:FindFirstChild(Player.Name.."_Laser") == nil then
+			local Dot = Instance.new('Part',Game_Workspace.Server)
+			local Att0 = Instance.new('Attachment',Dot)
+			Att0.Name = "Att0"
+			Dot.Name = Player.Name.."_Laser"
+			Dot.Transparency = 1
+
+			if Player.Character:FindFirstChild("S"..Arma.Name) and Player.Character:FindFirstChild('S'..Arma.Name).Handle:FindFirstChild("Muzzle") then
+				local Muzzle = Player.Character:FindFirstChild("S"..Arma.Name).Handle.Muzzle
+
+				local Laser = Instance.new('Beam',Dot)
+				Laser.Transparency = NumberSequence.new(0)
+				Laser.LightEmission = 1
+				Laser.LightInfluence = 0
+				Laser.Attachment0 = Att0
+				Laser.Attachment1 = Muzzle
+				Laser.Color = ColorSequence.new(Cor)
+				Laser.FaceCamera = true
+				Laser.Width0 = 0.01
+				Laser.Width1 = 0.01
+				if not NVG then
+					Laser.Enabled = false
+				end
+			end
+		end
+
+		if Modo == 1 then
+			if Game_Workspace.Server:FindFirstChild(Player.Name.."_Laser") then
+				local LA = Game_Workspace.Server:FindFirstChild(Player.Name.."_Laser")
+				LA.Shape = 'Ball'
+				LA.Size = Vector3.new(0.2, 0.2, 0.2)
+				LA.CanCollide = false
+				LA.Anchored = true
+				LA.Color = Cor
+				LA.Material = Enum.Material.Neon
+				LA.Position = Position	
+				if NVG then
+					LA.Transparency = 0
+
+					if LA:FindFirstChild("Beam") then
+						LA.Beam.Enabled = true
+					end
+				else
+					if IR then
+						LA.Transparency = 1
+					else
+						LA.Transparency = 0
+					end
+
+					if LA:FindFirstChild("Beam") then
+						LA.Beam.Enabled = false
+					end
+				end
+			end
+
+		elseif Modo == 2 then
+			if Game_Workspace.Server:FindFirstChild(Player.Name.."_Laser") then
+				Game_Workspace.Server:FindFirstChild(Player.Name.."_Laser"):Destroy()
+			end
+		end
+	end
+end)
+
+Evt.SVFlash.OnClientEvent:Connect(function(Player,Arma,Mode)
+
+	if Player ~= plr and Player.Character and Arma then
+		local Weapon = Player.Character:FindFirstChild("S"..Arma.Name)
+		if Weapon then
+			if Mode then
+				for index, Key in pairs(Weapon:GetDescendants()) do
+					if Key:IsA("BasePart") and Key.Name == "FlashPoint" then
+						Key.Light.Enabled = true
+					end
+				end
+			else
+				for index, Key in pairs(Weapon:GetDescendants()) do
+					if Key:IsA("BasePart") and Key.Name == "FlashPoint" then
+						Key.Light.Enabled = false
+					end
+				end
+			end
+		end
+	end
+end)
+
+Evt.Whizz.OnClientEvent:connect(function()
+
+	local Som = Instance.new('Sound')
+	Som.Parent = plr.PlayerGui
+	Som.SoundId = "rbxassetid://"..WhizzSound[math.random(1,#WhizzSound)]
+	Som.Volume = 2
+	Som.PlayOnRemove = true
+	Som:Destroy()
+
+end)
+
+Evt.MedSys.MedHandler.OnClientEvent:connect(function(Mode)
+
+	if Mode == 4 then
+		local FX = Instance.new('ColorCorrectionEffect')
+		FX.Parent = cam
+
+		TS:Create(FX,TweenInfo.new(.15,Enum.EasingStyle.Linear),{Contrast = -.25}):Play()
+		delay(.15,function()
+			TS:Create(FX,TweenInfo.new(1.5,Enum.EasingStyle.Sine,Enum.EasingDirection.In,0,false,0.15),{Contrast = 0}):Play()
+			Debris:AddItem(FX,1.5)
+		end)
+
+	elseif Mode == 5 then
+		local FX = Instance.new('ColorCorrectionEffect')
+		FX.Parent = cam
+
+		TS:Create(FX,TweenInfo.new(.15,Enum.EasingStyle.Linear),{Contrast = .5}):Play()
+		delay(.15,function()
+			TS:Create(FX,TweenInfo.new(1.5,Enum.EasingStyle.Sine,Enum.EasingDirection.In,0,false,0.15),{Contrast = 0}):Play()
+			Debris:AddItem(FX,1.5)
+		end)
+
+	elseif Mode == 6 then
+		local FX = Instance.new('ColorCorrectionEffect')
+		FX.Parent = cam
+
+		TS:Create(FX,TweenInfo.new(.15,Enum.EasingStyle.Linear),{Contrast = -.25}):Play()
+		delay(.15,function()
+			TS:Create(FX,TweenInfo.new(60,Enum.EasingStyle.Sine,Enum.EasingDirection.In,0,false,0.15),{Contrast = 0}):Play()
+			Debris:AddItem(FX,60)
+		end)
+
+	elseif Mode == 7 then
+		local FX = Instance.new('ColorCorrectionEffect')
+		FX.Parent = cam
+
+		TS:Create(FX,TweenInfo.new(.15,Enum.EasingStyle.Linear),{Contrast = .5}):Play()
+		delay(.15,function()
+			TS:Create(FX,TweenInfo.new(30,Enum.EasingStyle.Sine,Enum.EasingDirection.In,0,false,0.15),{Contrast = 0}):Play()
+			Debris:AddItem(FX,30)
+		end)
+	end
+
+end)
+
+-- Add this near the top with other event connections (around line 398)
+
+Evt.Suppression.OnClientEvent:Connect(function(Mode,Intensity,Tempo)
+	local SE_GUI = plr.PlayerGui:FindFirstChild("StatusUI")
+	if plr.Character and plr.Character.Humanoid.Health > 0 and SE_GUI then
+		if Mode == 1 then
+			char.Client:SetAttribute("SuppressTime",math.min(char.Client:GetAttribute("SuppressTime")+4,10))
+			TS:Create(SE_GUI.Efeitos.Suppress,TweenInfo.new(.1),{ImageTransparency = 0, Size = UDim2.fromScale(1,1.15)}):Play()
+			delay(.1,function()
+				TS:Create(SE_GUI.Efeitos.Suppress,TweenInfo.new(1,Enum.EasingStyle.Exponential,Enum.EasingDirection.InOut,0,false,0.15),{ImageTransparency = 1,Size = UDim2.fromScale(2,2)}):Play()
+			end)
+		elseif Mode == 2 then
+			char.Client:SetAttribute("SuppressTime",math.min(char.Client:GetAttribute("SuppressTime")+Tempo*12,10))
+			char.Client:SetAttribute("ExplosiveSuppressTime",math.min(char.Client:GetAttribute("SuppressTime")+Tempo*10,10))
+			local ring = PastaFx.EarRing:Clone()
+			ring.Parent = plr.PlayerGui
+			ring.Volume = 0
+			ring:Play()
+			Debris:AddItem(ring,Tempo*12)
+
+			local Suppress2 = SE_GUI.Efeitos.Suppress:Clone()
+			Suppress2.Parent = SE_GUI.Efeitos
+
+			TS:Create(Suppress2,TweenInfo.new(.1),{ImageTransparency = 0, Size = UDim2.fromScale(1,1.15)}):Play()
+			delay(.1,function()
+				TS:Create(Suppress2,TweenInfo.new(Tempo*12,Enum.EasingStyle.Exponential,Enum.EasingDirection.InOut),{ImageTransparency = 1,Size = UDim2.fromScale(2,2)}):Play()
+			end)
+
+			TS:Create(ring,TweenInfo.new(.1),{Volume = 10}):Play()
+			delay(.1,function()
+				TS:Create(ring,TweenInfo.new(Tempo*12,Enum.EasingStyle.Linear,Enum.EasingDirection.InOut),{Volume = 0}):Play()
+			end)
+
+			local Dirt2 = SE_GUI.Efeitos.Dirt:Clone()
+			Dirt2.Parent = SE_GUI.Efeitos
+
+			TS:Create(Dirt2,TweenInfo.new(.2,Enum.EasingStyle.Exponential,Enum.EasingDirection.InOut),{ImageTransparency = 0.6}):Play()
+
+			delay(.1,function()
+				TS:Create(Dirt2,TweenInfo.new(Tempo*12,Enum.EasingStyle.Exponential,Enum.EasingDirection.InOut),{ImageTransparency = 1}):Play()
+			end)
+
+			Debris:AddItem(Dirt2,Tempo*12)
+			Debris:AddItem(Suppress2,Tempo*12)
+		else
+			char.Client:SetAttribute("SuppressTime",math.min(char.Client:GetAttribute("SuppressTime")+Tempo*12,10))
+			char.Client:SetAttribute("ExplosiveSuppressTime",math.min(char.Client:GetAttribute("SuppressTime")+Tempo*10,10))
+			local ring = PastaFx.EarRing:Clone()
+			ring.Parent = plr.PlayerGui
+			ring.Volume = 0
+			ring:Play()
+			Debris:AddItem(ring,Tempo*12)
+
+			TS:Create(ring,TweenInfo.new(.1),{Volume = 2}):Play()
+			delay(.1,function()
+				TS:Create(ring,TweenInfo.new(Tempo*12,Enum.EasingStyle.Linear,Enum.EasingDirection.InOut,0,false,0.15),{Volume = 0}):Play()
+			end)
+		end
+	end
+end)
+
+-- Add this new event for hit sounds
+Evt.GotHit.OnClientEvent:Connect(function(CurrentHealth, MaxHealth)
+	local SE_GUI = plr.PlayerGui:FindFirstChild("StatusUI")
+	if plr.Character and plr.Character.Humanoid.Health > 0 and SE_GUI then
+		char.Client:SetAttribute("SuppressTime",math.min(char.Client:GetAttribute("SuppressTime")+6,10))
+
+		local HealthDownFactor = (MaxHealth/CurrentHealth)
+		local Blood1 = SE_GUI.Efeitos.Blood:Clone()
+		Blood1.Parent = SE_GUI.Efeitos
+		local Blood2 = SE_GUI.Efeitos.Health:Clone()
+		Blood2.Parent = SE_GUI.Efeitos
+		local Blood3 = SE_GUI.Efeitos.LowHealth:Clone()
+		Blood3.Parent = SE_GUI.Efeitos
+
+		TS:Create(Blood1,TweenInfo.new(.1),{ImageTransparency = 1/HealthDownFactor, Size = UDim2.fromScale(1,1.15)}):Play()
+		delay(.1,function()
+			TS:Create(Blood1,TweenInfo.new(2*HealthDownFactor,Enum.EasingStyle.Exponential,Enum.EasingDirection.InOut),{ImageTransparency = 1,Size = UDim2.fromScale(2,2)}):Play()
+		end)
+		TS:Create(Blood2,TweenInfo.new(.1),{ImageTransparency = 1/HealthDownFactor, Size = UDim2.fromScale(1,1.15)}):Play()
+		delay(.1,function()
+			TS:Create(Blood2,TweenInfo.new(2*HealthDownFactor,Enum.EasingStyle.Exponential,Enum.EasingDirection.InOut),{ImageTransparency = 1,Size = UDim2.fromScale(2,2)}):Play()
+		end)
+		TS:Create(Blood3,TweenInfo.new(.1),{ImageTransparency = 1/HealthDownFactor, Size = UDim2.fromScale(1,1.15)}):Play()
+		delay(.1,function()
+			TS:Create(Blood3,TweenInfo.new(2*HealthDownFactor,Enum.EasingStyle.Exponential,Enum.EasingDirection.InOut),{ImageTransparency = 1,Size = UDim2.fromScale(2,2)}):Play()
+		end)
+
+		Debris:AddItem(Blood1,2.5*HealthDownFactor)
+		Debris:AddItem(Blood2,2.5*HealthDownFactor)
+		Debris:AddItem(Blood3,2.5*HealthDownFactor)
+	end
+end)
+
+
+
+Evt.SVReload.OnClientEvent:Connect(function(Player,char,Data, WeaponTool)
+	if char:FindFirstChild("S"..WeaponTool.Name) then
+		local LeftAtt = char:FindFirstChild("S"..WeaponTool.Name).Handle.LeftGrip
+		pcall(function()
+			Data.SVReload({
+				LeftAtt,
+				char:FindFirstChild("S"..WeaponTool.Name)
+			})
+		end)
+	end
+
+end)
+
+Evt.GunStance.OnClientEvent:Connect(function(Player,stance,Data)
+	if Player.Character.Humanoid.Health > 0 and Player.Character:FindFirstChild("AnimBase") ~= nil then
+
+		-- Get the IK control for the left arm
+		local LeftIKControl = Player.Character.Humanoid:FindFirstChild("LeftIKControl")
+
+		-- Get the server gun model
+		local ServerGun = nil
+		for _, child in pairs(Player.Character:GetChildren()) do
+			if child.Name:match("^S") and child:FindFirstChild("Handle") then
+				ServerGun = child
+				break
+			end
+		end
+
+		-- Get torso components for tilt adjustment
+		local UpperTorso = Player.Character:FindFirstChild("UpperTorso")
+		local Waist = UpperTorso and UpperTorso:FindFirstChild("Waist")
+
+		-- Right arm components (still using Motor6D system)
+		local Right_Weld = Player.Character.AnimBase:FindFirstChild("RAW")
+		local RightElbow = Player.Character.AnimBase:FindFirstChild("RLAW")
+		local RightWrist = Player.Character.AnimBase:FindFirstChild("RHW")
+
+		if not Right_Weld or not RightElbow or not RightWrist then
+			return -- Exit if right arm components don't exist
+		end
+
+		local RECFrame = CFrame.new(0, Player.Character.RightUpperArm.Size.Y/2, 0)
+		local RWCFrame = CFrame.new(0, Player.Character.RightLowerArm.Size.Y/1.9, 0)
+
+		-- Torso tilt values for different stances
+		local torsoTiltAngle = 0
+		local torsoLeanAngle = 0
+		local compensationAngle = 0
+
+		-- IK weight adjustment (how strongly the left hand grips)
+		local ikWeight = 1
+
+		-- Determine stance-specific settings
+		if stance == 0 then -- Normal/idle stance
+			torsoTiltAngle = math.rad(-45)
+			torsoLeanAngle = math.rad(0)
+			compensationAngle = math.rad(-45)
+			ikWeight = 1
+
+		elseif stance == 2 then -- Aiming stance
+			torsoTiltAngle = math.rad(0) -- Less tilt when aiming for stability
+			torsoLeanAngle = math.rad(0) -- More forward lean
+			compensationAngle = math.rad(0)
+			ikWeight = 1.0 -- Full IK weight for stable aim
+
+		elseif stance == 1 then -- High ready
+			torsoTiltAngle = math.rad(-45)
+			torsoLeanAngle = math.rad(0) -- Slight backward lean
+			compensationAngle = math.rad(-45)
+			ikWeight = 1
+
+		elseif stance == -1 then -- Low ready
+			torsoTiltAngle = math.rad(-45)
+			torsoLeanAngle = math.rad(0) -- More forward lean for low ready
+			compensationAngle = math.rad(-45)
+			ikWeight = 1
+
+		elseif stance == -2 then -- Patrol
+			torsoTiltAngle = math.rad(-45) -- Minimal tilt for relaxed patrol
+			torsoLeanAngle = math.rad(0)
+			compensationAngle = math.rad(-45)
+			ikWeight = 1 -- Looser grip
+
+		elseif stance == 3 then -- Sprint
+			torsoTiltAngle = math.rad(-45) -- More dynamic tilt for sprint
+			torsoLeanAngle = math.rad(0)
+			compensationAngle = math.rad(-45)
+			ikWeight = 1 -- Loosest grip while running
+		end
+
+		-- Apply torso tilt with tween
+		if Waist then
+			-- Store original if not already stored
+			if not Waist:GetAttribute("OriginalC0Stored") then
+				Waist:SetAttribute("OriginalC0Stored", true)
+				Waist:SetAttribute("BaseC0X", Waist.C0.X)
+				Waist:SetAttribute("BaseC0Y", Waist.C0.Y) 
+				Waist:SetAttribute("BaseC0Z", Waist.C0.Z)
+			end
+
+			local baseC0 = CFrame.new(
+				Waist:GetAttribute("BaseC0X") or 0,
+				Waist:GetAttribute("BaseC0Y") or 0.2,
+				Waist:GetAttribute("BaseC0Z") or 0
+			)
+
+			local tiltCFrame = CFrame.Angles(torsoLeanAngle, torsoTiltAngle, 0)
+			TS:Create(Waist, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = baseC0 * tiltCFrame
+			}):Play()
+		end
+
+		-- Update right arm with compensation for torso tilt
+		local armCompensation = CFrame.Angles(0, compensationAngle, 0)
+
+		if stance == 0 then
+			TS:Create(Right_Weld, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = armCompensation * Data.SV_RightArmPos
+			}):Play()
+			TS:Create(RightElbow, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = RECFrame * Data.SV_RightElbowPos
+			}):Play()
+			TS:Create(RightWrist, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = RWCFrame * Data.SV_RightWristPos
+			}):Play()
+
+		elseif stance == 2 then
+			TS:Create(Right_Weld, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = armCompensation * Data.RightAim
+			}):Play()
+			TS:Create(RightElbow, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = RECFrame * Data.RightElbowAim
+			}):Play()
+			TS:Create(RightWrist, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = RWCFrame * Data.RightWristAim
+			}):Play()
+
+		elseif stance == 1 then
+			TS:Create(Right_Weld, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = armCompensation * Data.RightHighReady
+			}):Play()
+			TS:Create(RightElbow, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = RECFrame * Data.RightElbowHighReady
+			}):Play()
+			TS:Create(RightWrist, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = RWCFrame * Data.RightWristHighReady
+			}):Play()
+
+		elseif stance == -1 then
+			TS:Create(Right_Weld, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = armCompensation * Data.RightLowReady
+			}):Play()
+			TS:Create(RightElbow, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = RECFrame * Data.RightElbowLowReady
+			}):Play()
+			TS:Create(RightWrist, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = RWCFrame * Data.RightWristLowReady
+			}):Play()
+
+		elseif stance == -2 then
+			TS:Create(Right_Weld, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = armCompensation * Data.RightPatrol
+			}):Play()
+			TS:Create(RightElbow, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = RECFrame * Data.RightElbowPatrol
+			}):Play()
+			TS:Create(RightWrist, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = RWCFrame * Data.RightWristPatrol
+			}):Play()
+
+		elseif stance == 3 then
+			TS:Create(Right_Weld, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = armCompensation * Data.RightSprint
+			}):Play()
+			TS:Create(RightElbow, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = RECFrame * Data.RightElbowSprint
+			}):Play()
+			TS:Create(RightWrist, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				C0 = RWCFrame * Data.RightWristSprint
+			}):Play()
+		end
+
+		-- Update IK control weight for left arm
+		if LeftIKControl then
+			TS:Create(LeftIKControl, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+				Weight = ikWeight
+			}):Play()
+
+			-- Optional: Move the IK target for different stances
+			if ServerGun and ServerGun:FindFirstChild("Handle") then
+				local LeftGrip = ServerGun.Handle:FindFirstChild("LeftGrip")
+
+				if LeftGrip and stance == 3 then -- Sprint stance example
+					-- You could offset the grip position for sprint
+					local sprintOffset = CFrame.new(0, 0.2, -0.1) -- Adjust as needed
+					TS:Create(LeftGrip, TweenInfo.new(.25, Enum.EasingStyle.Sine), {
+						CFrame = LeftGrip.CFrame * sprintOffset
+					}):Play()
+				elseif LeftGrip then
+					-- Reset to default position for other stances
+					-- This assumes you store the original position somewhere
+					-- Or you can define it based on the gun model
+				end
+			end
+		end
+
+		-- Optional: Add different IK pole positions for different stances
+		if LeftIKControl and ServerGun and ServerGun:FindFirstChild("Handle") then
+			local LeftDir = ServerGun.Handle:FindFirstChild("LeftDir")
+			if LeftDir then
+				-- Adjust pole position based on stance for different elbow positions
+				local poleOffset = CFrame.new()
+
+				if stance == 2 then -- Aiming
+					poleOffset = CFrame.new(-0.5, 0, 0) -- Elbow out for stability
+				elseif stance == 3 then -- Sprint
+					poleOffset = CFrame.new(0, -0.3, 0) -- Elbow down
+				elseif stance == -1 then -- Low ready
+					poleOffset = CFrame.new(0, -0.2, 0.2) -- Elbow down and back
+				end
+
+				-- Apply pole offset if needed
+				-- Note: You might need to store original pole position
+			end
+		end
+	end
+end)
+
+Evt.HeadRot.OnClientEvent:Connect(function(Player, CF)
+	if Player ~= plr and Player.Character and Player.Character:FindFirstChild("HumanoidRootPart") ~= nil then
+		local Neck = Player.Character.Head:FindFirstChild("Neck")
+		if Neck then
+			TS:Create(Neck, TweenInfo.new(.2, Enum.EasingStyle.Sine, Enum.EasingDirection.Out, 0, false, 0), {C0 = CF}):Play()
+		end
+	end
+end)
+
+-- Helper function to check if a part should be added to ignore list
+function ShouldbeAddedtoIgnoreList(Part)
+	if (Part.CanCollide == false or Part.Transparency >= .9 or Part.Name == "ResistantGlass" or Part.Name == "Shard" or Part.Name == "Barrier") and 
+		Part.Name ~= "RightUpperLeg" and Part.Name ~= "RightLowerLeg" and Part.Name ~= "RightFoot" and 
+		Part.Name ~= "LeftUpperLeg" and Part.Name ~= "LeftLowerLeg" and Part.Name ~= "LeftFoot" and 
+		Part.Name ~= "RightUpperArm" and Part.Name ~= "RightLowerArm" and Part.Name ~= "RightHand" and 
+		Part.Name ~= "LeftUpperArm" and Part.Name ~= "LeftLowerArm" and Part.Name ~= "LeftHand" and 
+		Part.Name ~= "UpperTorso" and Part.Name ~= "LowerTorso" and Part.Name ~= "Torso" and 
+		Part.Name ~= "Right Arm" and Part.Name ~= "Left Arm" and Part.Name ~= "Left Leg" and 
+		Part.Name ~= "Right Leg" and Part.Name ~= "Neck" and Part.Name ~= "Head" and 
+		Part.Name ~= "Groin" and Part.Name ~= "Tree_Collision" and Part.Name ~= "BulletProtection" then
+		table.insert(Ignore_Model, Part)
+		return true
+	else 
+		return false
+	end
+end
+
+-- Helper function to cleanup missile
+function CleanupMissile(Bullet)
+	if not Bullet then return end
+
+	if Bullet:FindFirstChild("Smoke") then
+		Debris:AddItem(Bullet.Smoke, 6)
+		Bullet.Smoke.Parent = workspace
+	end
+	if Bullet:FindFirstChild("Fire") then
+		Debris:AddItem(Bullet.Fire, 6)
+		Bullet.Fire.Parent = workspace
+	end
+	if Bullet:FindFirstChild("SmokeTrail") then
+		Debris:AddItem(Bullet.SmokeTrail, 6)
+		Bullet.SmokeTrail.Parent = workspace
+	end
+	if Bullet:FindFirstChild("Trail") then
+		Debris:AddItem(Bullet.Trail, 6)
+		Bullet.Trail.Parent = workspace
+	end
+
+	Bullet:Destroy()
+end
+
+-- Guided missile tracking function for visual replication on other clients
+function GuidedMissileTrackingVisual(Bullet, Origin, WeaponData, targetJet, targetHandle)
+	local maxDistance = WeaponData.BulletRange or 2000
+	local TotalDistTraveled = 0
+	local PrevPos = Origin
+	local BulletStopped = false
+
+	-- Missile guidance parameters
+	local missileSpeed = WeaponData.MuzzleVelocity or 500
+	local turnSpeed = 8 -- How fast the missile can turn
+	local maxTurnAngle = math.rad(45) -- Maximum turn per frame
+
+	-- Set up raycast parameters
+	local missileRayParams = RaycastParams.new()
+	missileRayParams.FilterDescendantsInstances = Ignore_Model
+	missileRayParams.FilterType = Enum.RaycastFilterType.Exclude
+	missileRayParams.IgnoreWater = false
+
+	local lastUpdateTime = tick()
+
+	while not BulletStopped do
+		Run.Heartbeat:Wait()
+
+		-- Check if bullet still exists
+		if not Bullet or not Bullet.Parent then
+			break
+		end
+
+		local currentTime = tick()
+		local deltaTime = currentTime - lastUpdateTime
+		lastUpdateTime = currentTime
+
+		local BulletPos = Bullet.Position
+		TotalDistTraveled = TotalDistTraveled + (BulletPos - PrevPos).Magnitude
+
+		-- Check if exceeded max range
+		if TotalDistTraveled > maxDistance then
+			CleanupMissile(Bullet)
+			break
+		end
+
+		-- Check if target still exists and is valid
+		local targetValid = targetJet and targetJet.Parent and targetHandle and targetHandle.Parent
+
+		if targetValid then
+			-- Calculate direction to target
+			local toTarget = (targetHandle.Position - BulletPos).Unit
+			local currentVelocity = Bullet.AssemblyLinearVelocity
+
+			-- Make sure we have velocity to work with
+			if currentVelocity.Magnitude < 1 then
+				currentVelocity = (BulletPos - PrevPos).Unit * missileSpeed
+			end
+
+			local currentDirection = currentVelocity.Unit
+
+			-- Calculate the angle between current direction and target direction
+			local dotProduct = currentDirection:Dot(toTarget)
+			local angle = math.acos(math.clamp(dotProduct, -1, 1))
+
+			-- Smoothly interpolate towards target direction
+			local lerpFactor = math.min(turnSpeed * deltaTime, 1)
+
+			-- Calculate new direction using interpolation
+			local newDirection
+			if angle > 0.001 then -- Avoid division by zero
+				-- Clamp the turn amount
+				local maxLerp = maxTurnAngle / angle
+				lerpFactor = math.min(lerpFactor, maxLerp)
+
+				-- Lerp the direction
+				newDirection = (currentDirection + (toTarget - currentDirection) * lerpFactor).Unit
+			else
+				newDirection = toTarget
+			end
+
+			-- Apply the new velocity
+			local currentSpeed = currentVelocity.Magnitude
+			-- Maintain or slightly increase speed
+			local newSpeed = math.max(currentSpeed, missileSpeed * 0.8)
+			Bullet.AssemblyLinearVelocity = newDirection * newSpeed
+
+			-- Orient the bullet to face direction of travel
+			Bullet.CFrame = CFrame.new(BulletPos, BulletPos + newDirection)
+		end
+
+		-- Perform raycast for hit detection
+		local rayDirection = BulletPos - PrevPos
+		if rayDirection.Magnitude > 0 then
+			local raycastResult = workspace:Raycast(PrevPos, rayDirection * 1.5, missileRayParams)
+
+			if raycastResult and raycastResult.Instance then
+				local hitPart = raycastResult.Instance
+
+				-- Check if we should ignore this part
+				if not ShouldbeAddedtoIgnoreList(hitPart) then
+					-- Missile hit something - destroy it (damage is handled by server)
+					CleanupMissile(Bullet)
+					BulletStopped = true
+					break
+				else
+					-- Update raycast params if we added to ignore list
+					missileRayParams.FilterDescendantsInstances = Ignore_Model
+				end
+			end
+		end
+
+		PrevPos = BulletPos
+	end
+end
+
+function CastRay(Bullet, isUnderBarrel, ArchetypeData, AmmoData, WeaponData)
+	if Bullet then
+		local Bpos = Bullet.Position
+		local Bpos2 = Bpos
+		local recast = false
+		local raycastResult
+		local BulletStopped = false
+		local TotalDistTraveled = 0
+		local Origin = Bullet.Position
+
+		-- Calculate max distance based on bullet type
+		local maxDistance
+		if isUnderBarrel then
+			maxDistance = 7000
+		elseif AmmoData then
+			maxDistance = 7000 * AmmoData.BulletLifeTime
+		else
+			maxDistance = 7000 * ArchetypeData.BulletLifeTime
+		end
+
+		local raycastParams = RaycastParams.new()
+		raycastParams.FilterDescendantsInstances = Ignore_Model
+		raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+		raycastParams.IgnoreWater = true
+
+		while Bullet and not BulletStopped do
+			Run.Heartbeat:Wait()
+			if Bullet.Parent ~= nil then
+				Bpos = Bullet.Position
+				TotalDistTraveled = TotalDistTraveled + (Bpos - Bpos2).magnitude
+
+				-- Check if bullet has traveled max distance
+				if TotalDistTraveled > maxDistance then
+					-- Clean up any particle effects before destroying
+					if not isUnderBarrel then
+						if Bullet:FindFirstChild("Smoke") then
+							Bullet.Smoke.Parent = workspace
+						end
+						if Bullet:FindFirstChild("Fire") then
+							Bullet.Fire.Parent = workspace
+						end
+						if Bullet:FindFirstChild("SmokeTrail") then
+							Bullet.SmokeTrail.Parent = workspace
+						end
+					end
+					Bullet:Destroy()
+					break
+				end
+
+				-- Cast ray for collision detection
+				raycastResult = workspace:Raycast(Bpos2, (Bpos - Bpos2) * 1.5, raycastParams)
+
+				if raycastResult then
+					local Hit2 = raycastResult.Instance
+					local shouldIgnore = false
+
+					-- Check if hit should be ignored and added to ignore list
+					while raycastResult do
+						if ShouldbeAddedtoIgnoreList(Hit2) then
+							shouldIgnore = true
+							-- Update raycast params with new ignore list
+							raycastParams.FilterDescendantsInstances = Ignore_Model
+							-- Recast the ray
+							raycastResult = workspace:Raycast(Bpos2, (Bpos - Bpos2) * 20, raycastParams)
+							if raycastResult then
+								Hit2 = raycastResult.Instance
+							else
+								break
+							end
+						else
+							break
+						end
+					end
+
+					-- If we hit something that shouldn't be ignored, stop the bullet
+					if raycastResult and not shouldIgnore then
+						-- Clean up particle effects
+						if not isUnderBarrel then
+							if Bullet:FindFirstChild("Smoke") then
+								Bullet.Smoke.Parent = workspace
+							end
+							if Bullet:FindFirstChild("Fire") then
+								Bullet.Fire.Parent = workspace
+							end
+							if Bullet:FindFirstChild("SmokeTrail") then
+								Bullet.SmokeTrail.Parent = workspace
+							end
+						end
+						Bullet:Destroy()
+						BulletStopped = true
+						break
+					end
+				end
+
+				Bpos2 = Bpos
+			else
+				break
+			end
+		end
+	end
+end
+
+Evt.ServerBullet.OnClientEvent:Connect(function(Player, Origin, Direction, WeaponData, ModTable, ArchetypeData, AmmoData, isUnderBarrel, Jet)
+	if Player ~= plr and Player.Character then 
+		local Bullet = Instance.new("Part", Game_Workspace.Server)
+		Bullet.Name = string.format("%s_Bullet", Player.Name)
+		Bullet.CanCollide = false
+		Bullet.Shape = Enum.PartType.Ball
+		Bullet.Transparency = 1
+		Bullet.Size = Vector3.new(1,1,1)
+		Bullet.Color = ArchetypeData.TracerColor
+
+		local BulletCF = CFrame.new(Origin, Direction)
+		local BColor = ArchetypeData.TracerColor
+
+		-- Handle tracer visuals
+		if ArchetypeData.Tracer == true then
+			local At1 = Instance.new("Attachment")
+			At1.Name = "At1"
+			At1.Position = Vector3.new(-(.1),0,0)
+			At1.Parent = Bullet
+
+			local At2 = Instance.new("Attachment")
+			At2.Name = "At2"
+			At2.Position = Vector3.new((.2),0,0)
+			At2.Parent = Bullet
+
+			local Particles = Instance.new("Trail")
+			Particles.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1, 0);
+				NumberSequenceKeypoint.new(1, 1);
+			})
+
+			local bulletLifeTime = isUnderBarrel and ArchetypeData.BulletLifeTime or (ArchetypeData.BulletLifeTime)
+
+			task.delay(0.2,function()
+				Particles.Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, ArchetypeData.BulletTransparency, 0);
+					NumberSequenceKeypoint.new(0.5, ArchetypeData.BulletTransparency, 0);
+					NumberSequenceKeypoint.new(1, 1);
+				})
+			end)
+
+			Particles.WidthScale = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, ArchetypeData.BulletSize, 0);
+				NumberSequenceKeypoint.new(0.5, ArchetypeData.BulletSize, 0);
+				NumberSequenceKeypoint.new(1, ArchetypeData.BulletSize/10);
+			})
+
+			Particles.Color = ColorSequence.new(BColor)
+			Particles.Texture = "rbxassetid://14846394635"
+			Particles.TextureMode = Enum.TextureMode.Stretch
+
+			if ArchetypeData.GlowingBullet == true then
+				Particles.Brightness = 10
+				Particles.LightInfluence = 0
+				Particles.LightEmission = 1
+			end
+
+			Particles.FaceCamera = true
+			Particles.LightEmission = 1
+			Particles.LightInfluence = 0
+			Particles.Lifetime = bulletLifeTime
+			Particles.Attachment0 = At1
+			Particles.Attachment1 = At2
+			Particles.Parent = Bullet
+		end
+
+		-- Add special effects for specific weapon types (non-underbarrel only)
+		if not isUnderBarrel and WeaponData then
+			if WeaponData.WeaponType == "Flamethrower" or (AmmoData and AmmoData.DragonsBreath == true) then
+				-- Note: You'll need to ensure Engine.FX.Fire and Engine.FX.Smoke exist
+				if Engine and Engine.FX then
+					if Engine.FX.Fire then
+						Engine.FX.Fire:Clone().Parent = Bullet
+					end
+					if Engine.FX.Smoke then
+						Engine.FX.Smoke:Clone().Parent = Bullet
+					end
+				end
+			end
+
+			if WeaponData.WeaponType == "Rocket Launcher" then
+				if Engine and Engine.FX and Engine.FX.SmokeTrail then
+					Engine.FX.SmokeTrail:Clone().Parent = Bullet
+				end
+			end
+		end
+
+		-- Handle bullet flare
+		if ArchetypeData.BulletFlare == true then
+			local bg = Instance.new("BillboardGui", Bullet)
+			bg.Adornee = Bullet
+			bg.Enabled = false
+			local flashsize = math.random(75, 100)/10
+			bg.Size = UDim2.new(flashsize, 0, flashsize, 0)
+			bg.LightInfluence = 0
+			bg.Brightness = 20
+
+			local flash = Instance.new("ImageLabel", bg)
+			flash.BackgroundTransparency = 1
+			flash.Size = UDim2.new(1, 0, 1, 0)
+			flash.Position = UDim2.new(0, 0, 0, 0)
+			flash.Image = "http://www.roblox.com/asset/?id=1047066405"
+			flash.ImageTransparency = math.random(2, 5)/15
+			flash.ImageColor3 = BColor
+
+			spawn(function()
+				task.wait(0.1)
+				if Bullet and Bullet:FindFirstChild("BillboardGui") then
+					Bullet.BillboardGui.Enabled = true
+				end
+			end)
+		end
+
+		-- Physics setup
+		local BulletMass = Bullet:GetMass()
+		local Force = Vector3.new(0, BulletMass * workspace.Gravity - ArchetypeData.BulletDrop * workspace.Gravity, 0)
+		local BF = Instance.new("BodyForce", Bullet)
+		BF.Force = Force
+
+		Bullet.CFrame = BulletCF
+
+		-- Apply impulse with proper velocity multiplier
+		local muzzleVelocityMultiplier = isUnderBarrel and 9 or (ModTable.MuzzleVelocity * 9)
+		Bullet:ApplyImpulse(Direction * ArchetypeData.MuzzleVelocity * muzzleVelocityMultiplier)
+
+		-- Set collision group if it exists
+		pcall(function()
+			Bullet.CollisionGroup = "Bullet"
+		end)
+
+		game.Debris:AddItem(Bullet, 5)
+
+		-- Call the updated CastRay with all necessary parameters
+		CastRay(Bullet, isUnderBarrel, ArchetypeData, AmmoData, WeaponData)
+	end
+end)
+
+Evt.ServerMissile.OnClientEvent:Connect(function(Player, Origin, Direction, WeaponData, Jet, LockTarget)
+	if Player ~= plr and Player.Character then 
+		local Bullet = Instance.new("Part", Game_Workspace.Server)
+		Bullet.Name = Player.Name.."_Missile"
+		Bullet.CanCollide = false
+		Bullet.Shape = Enum.PartType.Ball
+		Bullet.Transparency = 1
+		Bullet.Size = Vector3.new(1,1,1)
+		Bullet.Color = WeaponData.TracerColor
+
+		local BulletCF = CFrame.new(Origin, Origin + Direction)
+		local BColor = WeaponData.TracerColor
+
+		-- Handle tracer visuals
+		if WeaponData.Tracer == true then
+			local At1 = Instance.new("Attachment")
+			At1.Name = "At1"
+			At1.Position = Vector3.new(-(.1),0,0)
+			At1.Parent = Bullet
+
+			local At2 = Instance.new("Attachment")
+			At2.Name = "At2"
+			At2.Position = Vector3.new((.2),0,0)
+			At2.Parent = Bullet
+
+			local Particles = Instance.new("Trail")
+			Particles.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1, 0);
+				NumberSequenceKeypoint.new(1, 1);
+			})
+
+			local bulletLifeTime = (WeaponData.BulletLifeTime)
+
+			task.delay(0.2,function()
+				if Particles and Particles.Parent then
+					Particles.Transparency = NumberSequence.new({
+						NumberSequenceKeypoint.new(0, WeaponData.BulletTransparency, 0);
+						NumberSequenceKeypoint.new(0.5, WeaponData.BulletTransparency, 0);
+						NumberSequenceKeypoint.new(1, 1);
+					})
+				end
+			end)
+
+			Particles.WidthScale = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, WeaponData.BulletSize, 0);
+				NumberSequenceKeypoint.new(0.5, WeaponData.BulletSize, 0);
+				NumberSequenceKeypoint.new(1, WeaponData.BulletSize/10);
+			})
+
+			Particles.Color = ColorSequence.new(BColor)
+			Particles.Texture = "rbxassetid://14846394635"
+			Particles.TextureMode = Enum.TextureMode.Stretch
+
+			if WeaponData.GlowingBullet == true then
+				Particles.Brightness = 10
+				Particles.LightInfluence = 0
+				Particles.LightEmission = 1
+			end
+
+			Particles.FaceCamera = true
+			Particles.LightEmission = 1
+			Particles.LightInfluence = 0
+			Particles.Lifetime = bulletLifeTime
+			Particles.Attachment0 = At1
+			Particles.Attachment1 = At2
+			Particles.Parent = Bullet
+		end
+
+		-- Add smoke trail for missiles
+		if Engine and Engine.FX and Engine.FX.SmokeTrail then
+			Engine.FX.SmokeTrail:Clone().Parent = Bullet
+		end
+		
+		local Mesh = Instance.new("SpecialMesh")
+		Mesh.Parent = Bullet
+		Mesh.MeshId = "http://www.roblox.com/asset/?id=2251534"
+		Mesh.MeshType = "FileMesh"
+		Mesh.Scale = Vector3.new(0.5,0.5,0.5)
+		Bullet.Color = Color3.new(0.4,0.4,0.5)
+		Bullet.Transparency = 0
+		local MissileSound = Engine.FX.MissileAir:Clone()
+		MissileSound.Parent = Bullet
+		MissileSound.Playing = true
+
+		-- Handle bullet flare
+		if WeaponData.BulletFlare == true then
+			local bg = Instance.new("BillboardGui", Bullet)
+			bg.Adornee = Bullet
+			bg.Enabled = false
+			local flashsize = math.random(75, 100)/10
+			bg.Size = UDim2.new(flashsize, 0, flashsize, 0)
+			bg.LightInfluence = 0
+			bg.Brightness = 20
+
+			local flash = Instance.new("ImageLabel", bg)
+			flash.BackgroundTransparency = 1
+			flash.Size = UDim2.new(1, 0, 1, 0)
+			flash.Position = UDim2.new(0, 0, 0, 0)
+			flash.Image = "http://www.roblox.com/asset/?id=1047066405"
+			flash.ImageTransparency = math.random(2, 5)/15
+			flash.ImageColor3 = BColor
+
+			spawn(function()
+				task.wait(0.1)
+				if Bullet and Bullet:FindFirstChild("BillboardGui") then
+					Bullet.BillboardGui.Enabled = true
+				end
+			end)
+		end
+
+		-- Physics setup
+		local BulletMass = Bullet:GetMass()
+		local Force = Vector3.new(0, BulletMass * workspace.Gravity - WeaponData.BulletDrop * workspace.Gravity, 0)
+		local BF = Instance.new("BodyForce", Bullet)
+		BF.Force = Force
+
+		Bullet.CFrame = BulletCF
+
+		-- Set collision group if it exists
+		pcall(function()
+			Bullet.CollisionGroup = "Bullet"
+		end)
+
+		game.Debris:AddItem(Bullet, 8) -- Longer lifetime for missiles
+
+		-- Check if we have a valid lock target
+		local targetHandle = nil
+		if LockTarget and LockTarget:FindFirstChild("Handle") then
+			targetHandle = LockTarget:FindFirstChild("Handle")
+		end
+
+		if targetHandle then
+			-- Apply reduced initial velocity for guided missile
+			Bullet:ApplyImpulse(Direction * WeaponData.MuzzleVelocity)
+
+			-- Use guided tracking system
+			task.spawn(function()
+				GuidedMissileTrackingVisual(Bullet, Origin, WeaponData, LockTarget, targetHandle)
+			end)
+		else
+			-- No lock target - fire straight (unguided)
+			Bullet:ApplyImpulse(Direction * WeaponData.MuzzleVelocity)
+
+			-- Use regular CastRay for unguided missiles
+			CastRay(Bullet, false, WeaponData, WeaponData, WeaponData)
+		end
+	end
+end)
+
+----------//Events\\----------
+
+------------------------------------------------------------
+--\Doors Update
+------------------------------------------------------------
+local DoorsFolder = Game_Workspace:FindFirstChild("Doors")
+local CAS = game:GetService("ContextActionService")
+
+local mDistance = 8
+local Key = nil
+
+function getNearest()
+	local nearest = nil
+	local minDistance = mDistance
+	local Character = plr.Character or plr.CharacterAdded:Wait()
+
+	for index,Building in pairs (game.Workspace.Buildings:GetChildren()) do
+		if Building:FindFirstChild("Floors") then
+			if Building.Floors["0"].Doors then
+				for I,Door in pairs (Building.Floors["0"].Doors:GetChildren()) do
+					if Door:FindFirstChild("Knob") ~= nil then
+						local distance = (Door.Knob.Position - Character.UpperTorso.Position).magnitude
+
+						if distance < minDistance then
+							nearest = Door
+							minDistance = distance
+						end
+					end
+				end
+			end
+		end
+	end
+	--print(nearest)
+	return nearest
+end
+
+function Interact(actionName, inputState, inputObj)
+	if inputState ~= Enum.UserInputState.Begin then return end
+
+	local nearestDoor = getNearest()
+	local Character = plr.Character or plr.CharacterAdded:Wait()
+
+	if nearestDoor == nil then return end
+
+	if (nearestDoor.Knob.Position - Character.UpperTorso.Position).magnitude <= mDistance then
+		print("Door Found In Range")
+		if nearestDoor ~= nil then
+			if nearestDoor:FindFirstChild("RequiresKey") then
+				Key = nearestDoor.RequiresKey.Value
+			else
+				Key = nil
+			end
+			Evt.DoorEvent:FireServer(nearestDoor,1,Key)
+		end
+	end
+end
+
+
+function GetNearest(parts, maxDistance,Part)
+	local closestPart
+	local minDistance = maxDistance
+	for _, partToFace in ipairs(parts) do
+		local distance = (Part.Position - partToFace.Position).magnitude
+		if distance < minDistance then
+			closestPart = partToFace
+			minDistance = distance
+		end
+	end
+	return closestPart
+end
+
+CAS:BindAction("Interact", Interact, false, Enum.KeyCode.T)
+
+if gameRules.WaterMark then
+	local StarterGui = game:GetService("StarterGui")
+
+	plr.Chatted:Connect(function(Message)
+		if string.lower(Message) == "/Eclipse" then
+			local StarterGui = game:GetService("StarterGui")
+
+			StarterGui:SetCore("ChatMakeSystemMessage", {
+				Text = "------------------------------------------------";
+				Color = Color3.fromRGB(0, 0, 35); 
+				Font = Enum.Font.RobotoCondensed; 
+				TextSize = 20
+			})
+
+			StarterGui:SetCore("ChatMakeSystemMessage", {
+				Text = "Advanced Combat System";
+				Color = Color3.fromRGB(255, 175, 0); 
+				Font = Enum.Font.RobotoCondensed; 
+				TextSize = 20
+			})
+
+			StarterGui:SetCore("ChatMakeSystemMessage", {
+				Text = "Made By: 00Scorpion00";
+				Color = Color3.fromRGB(255, 255, 255); 
+				Font = Enum.Font.RobotoCondensed; 
+				TextSize = 14
+			})
+
+			StarterGui:SetCore("ChatMakeSystemMessage", {
+				Text = "Version: "..gameRules.Version;
+				Color = Color3.fromRGB(255, 255, 255); 
+				Font = Enum.Font.RobotoCondensed; 
+				TextSize = 14
+			})
+
+			StarterGui:SetCore("ChatMakeSystemMessage", {
+				Text = "------------------------------------------------";
+				Color = Color3.fromRGB(0, 0, 35); 
+				Font = Enum.Font.RobotoCondensed; 
+				TextSize = 20
+			})
+		end
+	end)
+end
+
+Evt.CombatLog.OnClientEvent:Connect(function(CombatLog)
+	local CL = plr.PlayerGui:FindFirstChild("CombatLog")
+	if CL then
+		CL.Refresh:Fire(CombatLog)
+	else
+		local CL = HUDs.CombatLog:Clone()
+		CL.Parent = plr.PlayerGui
+		CL.CLS.Disabled = false
+		CL.Refresh:Fire(CombatLog)
+	end
+end)
+
+FlareDeployedRemote.OnClientEvent:Connect(function(flaringPlayer, flaringJet, muzzle, direction, flareCount, destroyedMissiles)
+	-- If missiles were destroyed, we might want to clean up any local missile visuals
+	-- targeting that jet (though the guided tracking should handle this via the server)
+
+	if destroyedMissiles > 0 then
+		-- Find and destroy any visual missiles in Game_Workspace.Server that might be
+		-- targeting the flaring jet (this is a visual cleanup)
+		for _, child in pairs(Game_Workspace.Server:GetChildren()) do
+			if child.Name:match("_Missile$") then
+				-- Check if this missile is near the flaring jet (rough proximity check)
+				local distToJet = (child.Position - flaringJet.Handle.Position).Magnitude
+				if distToJet < 100 then
+					-- Create small explosion effect
+					local explosionPos = child.Position
+					local Explos = Instance.new("Explosion")
+					Explos.BlastRadius = 3
+					Explos.BlastPressure = 0
+					Explos.ExplosionType = Enum.ExplosionType.NoCraters
+					Explos.Position = explosionPos
+					Explos.Visible = true
+					Explos.Parent = workspace.Terrain
+					Debris:AddItem(Explos, 2)
+
+					-- Destroy the missile visual
+					child:Destroy()
+				end
+			end
+		end
+	end
+end)
