@@ -1,0 +1,15 @@
+# Blender MTL File: 'None'
+# Material Count: 1
+
+newmtl body_texture.002
+Ns 56.806129
+Ka 0.500000 0.500000 0.500000
+Kd 1.000000 1.000000 1.000000
+Ks 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 3
+map_Bump C:\\Users\\willi\\sourceimages\\lowpoly_GRP-[Normal].jpg
+map_Kd C:\\Users\\willi\\sourceimages\\lowpoly_GRP-[Albedo].jpg
+map_Ks C:\\Users\\willi\\sourceimages\\lowpoly_GRP-[Specular].jpg
